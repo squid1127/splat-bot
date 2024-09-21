@@ -212,6 +212,5 @@ class SplatBot(commands.Bot):
                 await self.handle_dm_out(message)
                 return
 
-
 splat = SplatBot()
 splat.run()
