@@ -64,7 +64,6 @@ class SplatBot(commands.Bot):
         print(f"[Core] Logged in as {self.user}")
 
     # * Classes & Cogs
-
     # Database class for interacting with the database
     class Database:
         def __init__(self, creds: list):
@@ -143,6 +142,7 @@ class SplatBot(commands.Bot):
                 await cur.execute("SHOW TABLES")
                 tables = await cur.fetchall()
                 await cur.close()
+            tables = [table[0] for table in tables[0]]
             print(f"[Database] Tables: {tables}")
 
         # Read data from a table
@@ -170,7 +170,7 @@ class SplatBot(commands.Bot):
         @commands.Cog.listener()
         async def on_ready(self):
             print("[Database Manager] Setting up database tasks...")
-            #await self.test_connections.start()  #! For some reason nothing runs after this point
+            # await self.test_connections.start()  #! For some reason nothing runs after this point
             print("[Database Manager] Listening for database commands...")
 
             # Check if the database is set up correctly
@@ -441,7 +441,7 @@ db_creds = [
         "password": os.getenv("MYSQL_PASSWORD"),
         "db": os.getenv("MYSQL_DATABASE"),
     },
-        {
+    {
         "name": "Dev Database (Tailscale)",
         "host": "casaos.golden-hamlet.ts.net",
         "user": os.getenv("MYSQL_USER"),
