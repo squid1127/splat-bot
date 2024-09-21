@@ -441,6 +441,13 @@ db_creds = [
         "password": os.getenv("MYSQL_PASSWORD"),
         "db": os.getenv("MYSQL_DATABASE"),
     },
+        {
+        "name": "Dev Database (Tailscale)",
+        "host": "casaos.golden-hamlet.ts.net",
+        "user": os.getenv("MYSQL_USER"),
+        "password": os.getenv("MYSQL_PASSWORD"),
+        "db": os.getenv("MYSQL_DATABASE"),
+    },
 ]
 
 splat = SplatBot(token=token, db_creds=db_creds)
