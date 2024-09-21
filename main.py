@@ -85,7 +85,7 @@ class SplatBot(commands.Bot):
         def __init__(self, bot: "SplatBot"):
             self.bot = bot
 
-# Handle incoming DMs
+        # Handle incoming DMs
         async def handle_dm_in(self, message: discord.Message):
             dm_channel_id = int(os.getenv("BOT_DM_CHANNEL_ID"))
             self.dm_channel = self.bot.get_channel(
@@ -162,7 +162,7 @@ class SplatBot(commands.Bot):
                 ):
                     print("Found reference")
                     # Get the reference message ID from the header
-                    ref_msg_id = int(ref_msg_header.strip("%%||").split("&")[1])                    
+                    ref_msg_id = int(ref_msg_header.strip("%%||").split("&")[1])
 
                     # Fetch the reference message from the user's dm channel
                     if not user.dm_channel:
@@ -211,6 +211,7 @@ class SplatBot(commands.Bot):
             ) and message.channel.parent_id == int(os.getenv("BOT_DM_CHANNEL_ID")):
                 await self.handle_dm_out(message)
                 return
+
 
 splat = SplatBot()
 splat.run()
