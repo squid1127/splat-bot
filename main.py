@@ -14,6 +14,7 @@ from enum import Enum  # For enums (select menus)
 import asyncio
 import aiohttp
 import aiomysql
+import cryptography  # For database encryption
 
 # For random status
 import random
@@ -68,6 +69,7 @@ class SplatBot(commands.Bot):
     class Database:
         def __init__(self, creds: list):
             self.creds = creds
+            self.working = False
 
         # Check if credentials are set (not empty)
         def creds_check(self) -> bool:
@@ -124,7 +126,7 @@ class SplatBot(commands.Bot):
                 return None
 
         # Auto-connect (Connect to the first working database)
-        async def auto_connect(self):
+        async def auto_connect(self) -> aiomysql.Connection:
             if not hasattr(self, "functioning_creds"):
                 await self.test_all_connections()
             if len(self.functioning_creds) > 0:
@@ -137,13 +139,135 @@ class SplatBot(commands.Bot):
         # Check database format
         async def check_database(self):
             print("[Database] Checking database format...")
-            conn = await self.auto_connect()
+            print("[Database] Connecting to database...")
+            try:
+                conn = await self.auto_connect()
+                if conn is None:
+                    raise Exception("No working database connections")
+            except Exception as e:
+                print(f"[Database] Error connecting to database: {e}")
+                return
+            
+            # Fetch all tables
             async with conn.cursor() as cur:
                 await cur.execute("SHOW TABLES")
                 tables = await cur.fetchall()
                 await cur.close()
-            tables = [table[0] for table in tables[0]]
+            tables = [table[0] for table in tables]
             print(f"[Database] Tables: {tables}")
+
+            # Check if tables exist, create if not
+            tables_created = 0
+            tables_failed = 0
+
+            # Check admins table
+            if "admin_users" not in tables:
+                print("[Database] Admins table not found, creating...")
+                query = """
+                DROP TABLE IF EXISTS admin_users;
+                CREATE TABLE
+                admin_users (
+                    id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                    discord_id BIGINT NOT NULL,
+                    username VARCHAR(255) NOT NULL,
+                    name VARCHAR(255) NOT NULL
+                );
+                """
+                try:
+                    await self.execute_query(query, conn)
+                    print("[Database] Admins table created!")
+                    tables_created += 1
+                except Exception as e:
+                    print(f"[Database] Error creating admins table: {e}")
+                    tables_failed += 1
+
+            # Check guilds table
+            if ("guilds" not in tables) or ("channels" not in tables):
+                print("[Database] Guilds and/or channels table not found, creating...")
+                query = """
+                DROP TABLE IF EXISTS channels;
+
+                DROP TABLE IF EXISTS guilds;
+
+                CREATE TABLE
+                guilds (
+                    guild_id BIGINT NOT NULL PRIMARY KEY,
+                    name VARCHAR(255) NOT NULL,
+                    enable_owen_mode BOOLEAN DEFAULT FALSE,
+                    enable_banned_words BOOLEAN DEFAULT FALSE,
+                    admin_mode BOOLEAN DEFAULT FALSE
+                );
+
+                CREATE TABLE
+                channels (
+                    channel_id BIGINT NOT NULL PRIMARY KEY,
+                    name VARCHAR(255) NOT NULL,
+                    guild_id BIGINT NOT NULL REFERENCES guilds(guild_id),
+                    channel_mode VARCHAR(255),
+                    disable_banned_words BOOLEAN DEFAULT FALSE
+                );
+                """
+                try:
+                    await self.execute_query(query, conn)
+                    print("[Database] Guilds & Members tables created!")
+                    tables_created += 1
+                except Exception as e:
+                    print(f"[Database] Error creating tables: {e}")
+                    tables_failed += 1
+
+            # Check banned words table
+            if "banned_words" not in tables:
+                print("[Database] Banned words table not found, creating...")
+                query = """
+                DROP TABLE IF EXISTS banned_words;
+                CREATE TABLE
+                banned_words (
+                    id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                    word VARCHAR(255) NOT NULL
+                );
+                """
+                try:
+                    await self.execute_query(query, conn)
+                    print("[Database] Banned words table created!")
+                    tables_created += 1
+                except Exception as e:
+                    print(f"[Database] Error creating banned words table: {e}")
+                    tables_failed += 1
+
+            # Check whitelist table
+            if "whitelist" not in tables:
+                print("[Database] Whitelist table not found, creating...")
+                query = """
+                DROP TABLE IF EXISTS whitelist;
+                CREATE TABLE
+                whitelist (
+                    id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                    word VARCHAR(255) NOT NULL
+                );
+                """
+                try:
+                    await self.execute_query(query, conn)
+                    print("[Database] Whitelist table created!")
+                    tables_created += 1
+                except Exception as e:
+                    print(f"[Database] Error creating whitelist table: {e}")
+                    tables_failed += 1
+
+            # Close connection
+            print("[Database] Closing connection...")
+            if conn is not None:
+                conn.close()
+
+            # Print summary
+            print("[Database] Done checking database format!")
+            if tables_created > 0:
+                print(f"[Database] Created {tables_created} tables")
+            if tables_failed > 0:
+                print(f"[Database] ERROR: Failed to create {tables_failed} tables")
+                return
+
+            print("[Database] Database is good to go!")
+            self.working = True
 
         # Read data from a table
         async def read_table(self, table: str, conn: aiomysql.Connection):
@@ -155,6 +279,21 @@ class SplatBot(commands.Bot):
 
             if result:
                 return await self.convert_to_dict(result, description)
+            return result
+
+        # Execute generic SQL query
+        async def execute_query(self, query: str, conn: aiomysql.Connection):
+            async with conn.cursor() as cur:
+                await cur.execute(query)
+                result = await cur.fetchall()
+                description = cur.description
+                await cur.close()
+
+            if result:
+                try:
+                    return await self.convert_to_dict(result, description)
+                except:
+                    pass
             return result
 
         async def convert_to_dict(self, result: list, description: list):
@@ -173,16 +312,27 @@ class SplatBot(commands.Bot):
             # await self.test_connections.start()  #! For some reason nothing runs after this point
             print("[Database Manager] Listening for database commands...")
 
-            # Check if the database is set up correctly
-            await self.test_connections()
-            await self.check_then_format()
+            # Check if the database is set up correctly, loop until it is
+            while not self.bot.db.working:
+                await self.test_connections()
+                await self.check_then_format()
+                if self.bot.db.working:
+                    break
+                print("[Database Manager] Database not set up correctly, retrying in 60 seconds...")
+                await asyncio.sleep(60)
+                
+            # Start periodic tasks
+            print(
+                "[Database Manager] Database is working correctly! Starting tasks..."
+            )
+            await self.test_connections.start()
 
         async def check_then_format(self):
             print("[Database Manager] Checking database format...")
             await self.bot.db.check_database()
 
         # Periodic task: Test all database connections
-        # @tasks.loop(hours=6) <- Disabled due to glitches
+        @tasks.loop(hours=6)
         async def test_connections(self):
             print("[Database Manager] Testing all database connections...")
             try:
