@@ -36,7 +36,7 @@ class SplatBot(commands.Bot):
         self.db = self.Database(creds=db_creds)
         # Add cogs
         asyncio.run(self.addCogs())
-        
+
         print("[Core] Welcome to Splat Bot!")
 
     # Add the cogs (commands and events)
@@ -51,18 +51,19 @@ class SplatBot(commands.Bot):
         print("[Core] Running pre-run checks...")
         if not self.db.creds_check():
             raise Exception("Database credentials not set")
+
     # Run the bot
     def run(self):
         self.pre_run_checks()
         print("[Core] Running bot...")
         super().run(self.token)
-        
+
     # Bot ready event
     async def on_ready(self):
         print("[Core] Bot is ready!")
         print(f"[Core] Logged in as {self.user}")
 
-    #* Classes & Cogs
+    # * Classes & Cogs
 
     # Database class for interacting with the database
     class Database:
@@ -74,7 +75,7 @@ class SplatBot(commands.Bot):
             if len(self.creds) > 0:
                 return True
             return False
-        
+
         # Periodic Task: Test all database connections
         async def test_all_connections(self):
             print("[Database] Testing all connections...")
@@ -90,17 +91,24 @@ class SplatBot(commands.Bot):
                     ) as conn:
                         async with conn.cursor() as cur:
                             await cur.execute("SELECT 1")
-                            print(f"[Database] Connection to {cred['name']} successful!")
+                            print(
+                                f"[Database] Connection to {cred['name']} successful!"
+                            )
                             self.functioning_creds.append(cred)
                         conn.close()
                 except Exception as e:
                     if e.args[0] == 2003:
-                        print(f"[Database] Connection to {cred['name']} failed: Host not found")
+                        print(
+                            f"[Database] Connection to {cred['name']} failed: Host not found"
+                        )
                     else:
                         print(f"[Database] Connection to {cred['name']} failed: {e}")
+            if len(self.functioning_creds) == 0:
+                print("[Database] No working connections found!")
+                raise Exception("No working database connections found")
             print(f"[Database] {len(self.functioning_creds)} connections working!")
             return self.functioning_creds
-        
+
         # Connect to the database with specified credentials
         async def connect(self, cred: dict):
             try:
@@ -115,7 +123,7 @@ class SplatBot(commands.Bot):
             except Exception as e:
                 print(f"[Database] Connection to {cred['name']} failed: {e}")
                 return None
-        
+
         # Auto-connect (Connect to the first working database)
         async def auto_connect(self):
             if not hasattr(self, "functioning_creds"):
@@ -126,7 +134,7 @@ class SplatBot(commands.Bot):
                     if conn:
                         return conn
             return None
-        
+
         # Check database format
         async def check_database(self):
             print("[Database] Checking database format...")
@@ -142,92 +150,98 @@ class SplatBot(commands.Bot):
             async with conn.cursor() as cur:
                 await cur.execute(f"SELECT * FROM {table}")
                 result = await cur.fetchall()
-                description = cur.description  
-                await cur.close() 
-            
+                description = cur.description
+                await cur.close()
+
             if result:
                 return await self.convert_to_dict(result, description)
-            return result      
-        
+            return result
+
         async def convert_to_dict(self, result: list, description: list):
-            return [dict(zip([column[0] for column in description], row)) for row in result]   
-        
-        
-    # Facilitate database-related discord commands
+            return [
+                dict(zip([column[0] for column in description], row)) for row in result
+            ]
+
+    # Facilitate database-related discord commands & interactions
     class DatabaseHandler(commands.Cog):
         def __init__(self, bot: "SplatBot"):
             self.bot = bot
-            
+
         @commands.Cog.listener()
         async def on_ready(self):
             print("[Database Manager] Setting up database tasks...")
-            await self.test_connections.start()
+            #await self.test_connections.start()  #! For some reason nothing runs after this point
             print("[Database Manager] Listening for database commands...")
-            
+
             # Check if the database is set up correctly
-            # wait for connections to be tested
-            while len(self.bot.db.functioning_creds) == 0:
-                print("[Database Manager] Waiting for database connections to be tested...")
-                await asyncio.sleep(1)
-            
+            await self.test_connections()
             await self.check_then_format()
-                
-        
+
         async def check_then_format(self):
             print("[Database Manager] Checking database format...")
             await self.bot.db.check_database()
-            
-            
-            
+
         # Periodic task: Test all database connections
-        @tasks.loop(hours=6)
+        # @tasks.loop(hours=6) <- Disabled due to glitches
         async def test_connections(self):
-            print("[Database Manager] Running periodic task...")
+            print("[Database Manager] Testing all database connections...")
             try:
                 self.functioning_creds = await self.bot.db.test_all_connections()
             except Exception as e:
                 print(f"[Database Manager] Error running periodic task: {e}")
             else:
-                print("[Database Manager] Done running periodic task!")
-                
+                print("[Database Manager] Done running task!")
+
         # Test command: fetch raw data from a table
-        @app_commands.command(name="fetch-data", description="Fetch raw data from a database table")
+        @app_commands.command(
+            name="fetch-data", description="Fetch raw data from a database table"
+        )
         async def test_fetch(self, interaction: discord.Interaction, table: str):
             print(f"[Database Manager] Command: Fetching data from table: {table}")
             conn = await self.bot.db.auto_connect()
             if conn is None:
-                await interaction.response.send_message("No working database connections")
+                await interaction.response.send_message(
+                    "No working database connections"
+                )
                 return
             try:
                 result = await self.bot.db.read_table(table, conn)
             except Exception as e:
                 if e.args[0] == 1146:
-                    await interaction.response.send_message(f"Table `{table}` not found")
+                    await interaction.response.send_message(
+                        f"Table `{table}` not found"
+                    )
                     return
                 await interaction.response.send_message(f"Error fetching data: {e}")
                 return
-            await interaction.response.send_message(f"**Result**: \n```python\n{result}\n```")
+            await interaction.response.send_message(
+                f"**Result**: \n```python\n{result}\n```"
+            )
             conn.close()
             print(f"[Database Manager] Done fetching data from table: {table}")
-            
 
     # Bot events (on_ready, on_message, etc.)
     class Tasks(commands.Cog):
         def __init__(self, bot: "SplatBot"):
             self.bot = bot
-        
+
         # Random status task (changes every 24 hours)
         @tasks.loop(hours=24)
         async def random_status(self):
             custom_messages = [
                 {"label": "hit the unsell button", "type": "game"},
-                {"label": "That's a good question, one I'm not aware of myself", "type": "custom"},
+                {
+                    "label": "That's a good question, one I'm not aware of myself",
+                    "type": "custom",
+                },
                 {"label": "you procrastinate", "type": "watching"},
                 {"label": "🥔", "type": "game"},
                 {"label": "There is nothing we can do", "type": "custom"},
             ]
             new_status = random.choice(custom_messages)
-            print(f"[Tasks] Changing status to ({new_status['type']}) {new_status['label']}")
+            print(
+                f"[Tasks] Changing status to ({new_status['type']}) {new_status['label']}"
+            )
             if new_status["type"] == "game":
                 await self.bot.change_presence(
                     activity=discord.Game(
@@ -253,6 +267,7 @@ class SplatBot(commands.Bot):
         async def on_ready(self):
             print(f"[Tasks] Running tasks...")
             self.random_status.start()
+            print(f"[Tasks] Tasks started!")
 
     # Bot commands
     class SplatCommands(commands.Cog):
@@ -333,7 +348,7 @@ class SplatBot(commands.Bot):
             user = self.bot.get_user(user_id)
 
             print(f"[DMs] Outgoing DM to {user.name}: {message.content}")
-            
+
             # Check if the message is a reply
             if message.reference:
                 print("[DMs] Reply detected")
@@ -401,11 +416,11 @@ class SplatBot(commands.Bot):
             ) and message.channel.parent_id == int(os.getenv("BOT_DM_CHANNEL_ID")):
                 await self.handle_dm_out(message)
                 return
-            
+
         @commands.Cog.listener()
         async def on_ready(self):
             print("[DMs] Listening for DMs...")
-            
+
             # Future on_ready code here
 
 
@@ -413,13 +428,19 @@ load_dotenv()
 token = os.getenv("BOT_TOKEN")
 db_creds = [
     {
-        "name": "Main",
-        "host": os.getenv("DB_HOST"),
-        "port": int(os.getenv("DB_PORT")),
-        "user": os.getenv("DB_USER"),
-        "password": os.getenv("DB_PASS"),
-        "db": os.getenv("DB_NAME"),
-    }
+        "name": "Dev Database (Docker)",
+        "host": "mysql",
+        "user": os.getenv("MYSQL_USER"),
+        "password": os.getenv("MYSQL_PASSWORD"),
+        "db": os.getenv("MYSQL_DATABASE"),
+    },
+    {
+        "name": "Dev Database (localhost)",
+        "host": "localhost",
+        "user": os.getenv("MYSQL_USER"),
+        "password": os.getenv("MYSQL_PASSWORD"),
+        "db": os.getenv("MYSQL_DATABASE"),
+    },
 ]
 
 splat = SplatBot(token=token, db_creds=db_creds)
