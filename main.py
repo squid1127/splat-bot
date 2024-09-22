@@ -46,7 +46,7 @@ class SplatBot(commands.Bot):
         await self.add_cog(self.SplatCommands(self))
         await self.add_cog(self.DMHandler(self))
         await self.add_cog(self.DatabaseHandler(self))
-        await self.add_cog(self.MessageScan(self))
+        await self.add_cog(self.GuildsCheck(self))
 
     # Pre-run checks
     def pre_run_checks(self):
@@ -711,8 +711,8 @@ Admins: {self.admins}"""
 
             # Future on_ready code here
 
-    # Handle incoming messages and scan for banned words, unregisterd guilds, etc.
-    class MessageScan(commands.Cog):
+    # Handle guilds and channels, sync with database
+    class GuildsCheck(commands.Cog):
         def __init__(self, bot: "SplatBot"):
             self.bot = bot
 
