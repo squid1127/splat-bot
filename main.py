@@ -46,6 +46,7 @@ class SplatBot(commands.Bot):
         await self.add_cog(self.SplatCommands(self))
         await self.add_cog(self.DMHandler(self))
         await self.add_cog(self.DatabaseHandler(self))
+        await self.add_cog(self.MessageScan(self))
 
     # Pre-run checks
     def pre_run_checks(self):
@@ -70,6 +71,7 @@ class SplatBot(commands.Bot):
         def __init__(self, creds: list):
             self.creds = creds
             self.working = False
+            self.data = self.DbData()
 
         # Check if credentials are set (not empty)
         def creds_check(self) -> bool:
@@ -147,7 +149,7 @@ class SplatBot(commands.Bot):
             except Exception as e:
                 print(f"[Database] Error connecting to database: {e}")
                 return
-            
+
             # Fetch all tables
             async with conn.cursor() as cur:
                 await cur.execute("SHOW TABLES")
@@ -280,11 +282,37 @@ class SplatBot(commands.Bot):
             if result:
                 return await self.convert_to_dict(result, description)
             return result
+        
+        async def add_entry(self, table: str, data: dict, conn: aiomysql.Connection):
+            columns = ", ".join(data.keys())
+            placeholders = ", ".join(["%s"] * len(data))
+            values = tuple(data.values())
+            query = f"INSERT INTO {table} ({columns}) VALUES ({placeholders})" 
+            print(query)
+            
+            async with conn.cursor() as cur:
+                await cur.execute(query, values)
+                await conn.commit()
+                await cur.close()
+            
+            #!await self.execute_query(query, conn) #! This doesn't work for some reason
+ 
+            print(f"[Database] Added entry to {table}: {data}")
+    
+        async def update_entry(self, table: str, data: dict, conn: aiomysql.Connection):
+            columns = ", ".join(data.keys())
+            placeholders = ", ".join(["%s"] * len(data))
+            values = tuple(data.values())
+            query = f"UPDATE {table} SET {columns} = {placeholders}"
+            
+            await self.execute_query(query, conn, values)
+            print(f"[Database] Updated entry in {table}: {data}")
+
 
         # Execute generic SQL query
-        async def execute_query(self, query: str, conn: aiomysql.Connection):
+        async def execute_query(self, query: str, conn: aiomysql.Connection, values: tuple = None):
             async with conn.cursor() as cur:
-                await cur.execute(query)
+                await cur.execute(query, values)    
                 result = await cur.fetchall()
                 description = cur.description
                 await cur.close()
@@ -300,6 +328,95 @@ class SplatBot(commands.Bot):
             return [
                 dict(zip([column[0] for column in description], row)) for row in result
             ]
+
+        # Read and update all tables
+        async def read_all(self, conn: aiomysql.Connection):
+            print("[Database] Reading all tables...")
+            guilds = await self.read_table("guilds", conn)
+            channels = await self.read_table("channels", conn)
+            banned_words = await self.read_table("banned_words", conn)
+            whitelist = await self.read_table("whitelist", conn)
+            admins = await self.read_table("admin_users", conn)
+
+            # Write to data object
+            self.data.update(
+                guilds=guilds,
+                channels=channels,
+                banned_words=banned_words,
+                whitelist=whitelist,
+                admins=admins,
+            )
+
+            print(f"[Database] Done reading all tables!\n{self.data}")
+            
+        # Autmatically connect and read all tables
+        async def update_db(self):
+            conn = await self.auto_connect()
+            if conn is None:
+                print("[Database] No working database connections")
+                return
+            await self.read_all(conn)
+            conn.close()
+            
+        
+
+        class DbData:
+            def __init__(self):
+                # Database tables
+                self.guilds = []
+                self.channels = []
+                self.banned_words = []
+                self.whitelist = []
+                self.admins = []
+
+                self.write_count = 0
+
+            def __str__(self):
+                return f"""Database Data:
+Guilds: {self.guilds}
+Channels: {self.channels}
+Banned Words: {self.banned_words}
+Whitelist: {self.whitelist}
+Admins: {self.admins}"""
+
+            def update(
+                self,
+                guilds: list = None,
+                channels: list = None,
+                banned_words: list = None,
+                whitelist: list = None,
+                admins: list = None,
+            ):
+                if guilds:
+                    self.guilds = guilds
+                if channels:
+                    self.channels = channels
+                if banned_words:
+                    self.banned_words = banned_words
+                if whitelist:
+                    self.whitelist = whitelist
+                if admins:
+                    self.admins = admins
+                self.write_count += 1
+
+            def is_data_empty(self):
+                if (
+                    len(self.guilds) == 0
+                    and len(self.channels) == 0
+                    and len(self.banned_words) == 0
+                    and len(self.whitelist) == 0
+                    and len(self.admins) == 0
+                ):
+                    return True
+                return False
+
+            def clear(self):
+                self.guilds = []
+                self.channels = []
+                self.banned_words = []
+                self.whitelist = []
+                self.admins = []
+                self.write_count = 0
 
     # Facilitate database-related discord commands & interactions
     class DatabaseHandler(commands.Cog):
@@ -318,13 +435,14 @@ class SplatBot(commands.Bot):
                 await self.check_then_format()
                 if self.bot.db.working:
                     break
-                print("[Database Manager] Database not set up correctly, retrying in 60 seconds...")
+                print(
+                    "[Database Manager] Database not set up correctly, retrying in 60 seconds..."
+                )
                 await asyncio.sleep(60)
-                
+
             # Start periodic tasks
-            print(
-                "[Database Manager] Database is working correctly! Starting tasks..."
-            )
+            print("[Database Manager] Database is working correctly! Starting tasks...")
+            await self.pull_data.start()
             await self.test_connections.start()
 
         async def check_then_format(self):
@@ -333,7 +451,9 @@ class SplatBot(commands.Bot):
 
         # Periodic task: Test all database connections
         @tasks.loop(hours=6)
-        async def test_connections(self):
+        async def test_connections(self, periodic: bool = True):
+            if periodic:
+                print("[Database Manager] Running periodic task...")
             print("[Database Manager] Testing all database connections...")
             try:
                 self.functioning_creds = await self.bot.db.test_all_connections()
@@ -341,6 +461,24 @@ class SplatBot(commands.Bot):
                 print(f"[Database Manager] Error running periodic task: {e}")
             else:
                 print("[Database Manager] Done running task!")
+
+        # Periodic task: Pull all data from the database
+        @tasks.loop(hours=8)
+        async def pull_data(self, periodic: bool = True):
+            if periodic:
+                print("[Database Manager] Running periodic task...")
+            print("[Database Manager] Pulling data from database...")
+            conn = await self.bot.db.auto_connect()
+            if conn is None:
+                print("[Database Manager] No working database connections")
+                return
+            try:
+                await self.bot.db.read_all(conn)
+            except Exception as e:
+                print(f"[Database Manager] Error pulling data: {e}")
+            else:
+                print("[Database Manager] Done pulling data!")
+            conn.close()
 
         # Test command: fetch raw data from a table
         @app_commands.command(
@@ -572,6 +710,97 @@ class SplatBot(commands.Bot):
             print("[DMs] Listening for DMs...")
 
             # Future on_ready code here
+
+    # Handle incoming messages and scan for banned words, unregisterd guilds, etc.
+    class MessageScan(commands.Cog):
+        def __init__(self, bot: "SplatBot"):
+            self.bot = bot
+
+        @commands.Cog.listener()
+        async def on_message(self, message: discord.Message):
+            # Ignore bot messages
+            if message.author.bot:
+                return
+
+            if not self.bot.db.working:
+                print("[Guilds] Message received but database not set up correctly, ignoring...")
+                return
+
+            db_changed = False
+            # Check if guild is registered
+            guild_data = None
+            for guild in self.bot.db.data.guilds:
+                if guild["guild_id"] == message.guild.id:
+                    guild_data = guild
+                    break
+            if not guild_data:
+                print(
+                    f"[Guilds] Guild {message.guild.name} not registered, registering..."
+                )
+                if await self.add_guild(message.guild):
+                    db_changed = True
+                
+                
+            # Check if channel is registered
+            channel_data = None
+            for channel in self.bot.db.data.channels:
+                if channel["channel_id"] == message.channel.id:
+                    channel_data = channel
+                    break
+            if not channel_data:
+                print(
+                    f"[Channels] Channel {message.channel.name} not registered, registering..."
+                )
+                if await self.add_channel(message.channel):
+                    db_changed = True
+            
+            if db_changed:
+                print("[Guilds] Database changed, pulling data...")
+                await self.bot.db.update_db()
+                
+
+            # # Check if the message contains any banned words
+            # if await self.check_banned_words(message):
+            #     return
+        
+        # Register a guild in the database
+        async def add_guild(self, guild: discord.Guild, owen_mode: bool = False, banned_words: bool = False, admin_mode: bool = False):
+            try:
+                print(f"[Guilds] Adding guild {guild.name} to database...")
+                conn = await self.bot.db.auto_connect()
+                data = {
+                    "guild_id": guild.id,
+                    "name": guild.name,
+                    "enable_owen_mode": int(owen_mode),
+                    "enable_banned_words": int(banned_words),
+                    "admin_mode": int(admin_mode),
+                }
+                await self.bot.db.add_entry("guilds", data, conn)
+                print(f"[Guilds] Added guild {guild.name} to database")
+                return True
+            except Exception as e:
+                print(f"[Guilds] Error adding guild {guild.name} to database: {e}")
+                return False
+        
+        # Register a channel in the database
+        async def add_channel(self, channel: discord.TextChannel, channel_mode: str = None, disable_banned_words: bool = False):
+            try:
+                print(f"[Channels] Adding channel {channel.name} to database...")
+                conn = await self.bot.db.auto_connect()
+                data = {
+                    "channel_id": channel.id,
+                    "name": channel.name,
+                    "guild_id": channel.guild.id,
+                    "channel_mode": channel_mode,
+                    "disable_banned_words": int(disable_banned_words),
+                }
+                await self.bot.db.add_entry("channels", data, conn)
+                print(f"[Channels] Added channel {channel.name} to database")
+                return True
+            except Exception as e:
+                print(f"[Channels] Error adding channel {channel.name} to database: {e}")
+                return False
+        
 
 
 load_dotenv()
