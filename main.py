@@ -58,6 +58,8 @@ class SplatBot(commands.Bot):
     # Run the bot
     def run(self):
         self.pre_run_checks()
+        print("[Core] Setting up database...")
+        asyncio.run(self.cogs["DatabaseHandler"].setup())
         print("[Core] Running bot...")
         super().run(self.token)
 
@@ -424,25 +426,40 @@ Admins: {self.admins}"""
         def __init__(self, bot: "SplatBot"):
             self.bot = bot
 
-        @commands.Cog.listener()
-        async def on_ready(self):
-            print("[Database Manager] Setting up database tasks...")
-            # await self.test_connections.start()  #! For some reason nothing runs after this point
-            print("[Database Manager] Listening for database commands...")
+        # Run prior to bot start
+        async def setup(self):
+            print("[Database Manager] Attempting to set up database...")
 
             # Check if the database is set up correctly, loop until it is
             while not self.bot.db.working:
-                await self.test_connections()
-                await self.check_then_format()
+                try:
+                    await self.test_connections(False) # Test all connections & credentials
+                    await self.check_then_format() # Check database is formatted correctly
+                    await self.bot.db.update_db() # Pull data from the database
+                except Exception as e:
+                    print(f"[Database Manager] Error setting up database: {e}")
                 if self.bot.db.working:
                     break
                 print(
-                    "[Database Manager] Database not set up correctly, retrying in 60 seconds..."
+                    "[Database Manager] Connection to database failed, retrying in 15 seconds..."
                 )
-                await asyncio.sleep(60)
+                await asyncio.sleep(15)
+            print("[Database Manager] Database setup complete!")
+            
+            if self.bot.db.data.is_data_empty():
+                print("[Database Manager] Warning! No data found in database, potentially due to a database error.")
+                return 1
+            elif self.bot.db.working:
+                print("[Database Manager] Database is fully operational!")
+                return 2
+            print("[Database Manager] Database setup failed!")
+            return 0
 
+
+        @commands.Cog.listener()
+        async def on_ready(self):
             # Start periodic tasks
-            print("[Database Manager] Database is working correctly! Starting tasks...")
+            print("[Database Manager] Starting tasks...")
             await self.pull_data.start()
             await self.test_connections.start()
 
@@ -890,13 +907,13 @@ db_creds = [
         "password": os.getenv("MYSQL_PASSWORD"),
         "db": os.getenv("MYSQL_DATABASE"),
     },
-    {
-        "name": "Dev Database (Tailscale)",
-        "host": "casaos.golden-hamlet.ts.net",
-        "user": os.getenv("MYSQL_USER"),
-        "password": os.getenv("MYSQL_PASSWORD"),
-        "db": os.getenv("MYSQL_DATABASE"),
-    },
+    # {
+    #     "name": "Dev Database (Tailscale)",
+    #     "host": "casaos.golden-hamlet.ts.net",
+    #     "user": os.getenv("MYSQL_USER"),
+    #     "password": os.getenv("MYSQL_PASSWORD"),
+    #     "db": os.getenv("MYSQL_DATABASE"),
+    # },
 ]
 
 splat = SplatBot(token=token, db_creds=db_creds)
