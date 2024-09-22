@@ -804,7 +804,74 @@ Admins: {self.admins}"""
             
     # Anti-Brainrot (Banned Words) Filter
     class AntiBrainrot(commands.Cog):
-        pass
+        def __init__(self, bot: "SplatBot"):
+            self.bot = bot
+            self.working = False
+        
+        @commands.Cog.listener()
+        async def on_ready(self):
+            if len(self.bot.db.data.banned_words) == 0:
+                print("[Anti-Brainrot] No banned words found in database")
+                print("[Anti-Brainrot] Waiting for banned words...")
+                while len(self.bot.db.data.banned_words) == 0:
+                    await asyncio.sleep(2)
+                print("[Anti-Brainrot] Banned words found!")
+            self.working = True
+            print("[Anti-Brainrot] Listening for banned words...")
+            
+        @commands.Cog.listener()
+        async def on_message(self, message: discord.Message):
+            if not self.working:
+                print("[Anti-Brainrot] Banned words not set up correctly, ignoring...")
+                return
+            
+            # Scan message for banned words
+            found = await self.is_banned(message.content.lower())
+            
+            if found == 0:
+                return
+            
+            # Carry out punishment (5 minute timeout/detected word)
+            timeout_length = len(found) * 5
+            timeout = timedelta(minutes=timeout_length)
+            embed = discord.Embed(
+                title="Anti-Brainrot",
+                description=f"Your message contained a banned brainrot phrase. You have been timed out for {timeout_length} minutes.",
+                color=discord.Color.red(),
+            )
+            for phrase in found:
+                embed.add_field(name="Matched", value=f"{phrase[0]} -> {phrase[1]}%", inline=False)
+            embed.set_footer(text="This server has a zero-tolerance policy for brainrot. If you believe this is a mistake, use the /report-brainrot command once your timeout is over.")
+            try:
+                await message.reply("@everyone", embed=embed)
+                await message.author.timeout(timeout, reason="Used brainrot")
+            except Exception as e:
+                embed.description = f"Your message contained a banned brainrot phrase. However, it appears you cannot be timed out. Please refrain from using brainrot in the future."
+                await message.reply("@everyone", embed=embed)
+            
+            
+        async def is_banned(self, phrase: str) -> int:
+            # Scan using fuzzy matching
+            fuzzy_threshold = 80
+            fuzzy_method = fuzz.partial_ratio
+            found_banned = []
+            for word in self.bot.db.data.banned_words:
+                if fuzzy_method(word["word"], phrase) >= fuzzy_threshold:
+                    found_banned.append((word["word"], fuzzy_method(word["word"], phrase)))
+            if len(found_banned) == 0:
+                return 0
+            
+            # Scan for whitelist words
+            for word in self.bot.db.data.whitelist:
+                if word["word"] in phrase:
+                    return 0
+                
+            # If we've reached this point, the phrase is banned
+            print(f"[Anti-Brainrot] Banned phrase detected: {phrase} (Matched: {found_banned})")
+            return len(found_banned)
+            
+            
+            
 
 load_dotenv()
 token = os.getenv("BOT_TOKEN")
