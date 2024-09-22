@@ -804,6 +804,7 @@ Admins: {self.admins}"""
             
     # Anti-Brainrot (Banned Words) Filter
     class AntiBrainrot(commands.Cog):
+        pass
 
 load_dotenv()
 token = os.getenv("BOT_TOKEN")
