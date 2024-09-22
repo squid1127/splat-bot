@@ -42,12 +42,18 @@ class SplatBot(commands.Bot):
 
     # Add the cogs (commands and events)
     async def addCogs(self):
-        await self.add_cog(self.Tasks(self)) # Tasks -> Random status
-        await self.add_cog(self.SplatCommands(self)) # Misc commands -> Ping
-        await self.add_cog(self.DMHandler(self)) # Handle DMs -> Forward to DM threads
-        await self.add_cog(self.DatabaseHandler(self)) # Database <=> Discord Interactions -> Sync commands, test connections, perodic database tasks
-        await self.add_cog(self.GuildsCheck(self)) # Guilds & Channels -> Register guilds and channels based on messages
-        await self.add_cog(self.AntiBrainrot(self)) # Anti-Brainrot -> Banned words filter
+        await self.add_cog(self.Tasks(self))  # Tasks -> Random status
+        await self.add_cog(self.SplatCommands(self))  # Misc commands -> Ping
+        await self.add_cog(self.DMHandler(self))  # Handle DMs -> Forward to DM threads
+        await self.add_cog(
+            self.DatabaseHandler(self)
+        )  # Database <=> Discord Interactions -> Sync commands, test connections, perodic database tasks
+        await self.add_cog(
+            self.GuildsCheck(self)
+        )  # Guilds & Channels -> Register guilds and channels based on messages
+        await self.add_cog(
+            self.AntiBrainrot(self)
+        )  # Anti-Brainrot -> Banned words filter
 
     # Pre-run checks
     def pre_run_checks(self):
@@ -285,37 +291,38 @@ class SplatBot(commands.Bot):
             if result:
                 return await self.convert_to_dict(result, description)
             return result
-        
+
         async def add_entry(self, table: str, data: dict, conn: aiomysql.Connection):
             columns = ", ".join(data.keys())
             placeholders = ", ".join(["%s"] * len(data))
             values = tuple(data.values())
-            query = f"INSERT INTO {table} ({columns}) VALUES ({placeholders})" 
+            query = f"INSERT INTO {table} ({columns}) VALUES ({placeholders})"
             print(query)
-            
+
             async with conn.cursor() as cur:
                 await cur.execute(query, values)
                 await conn.commit()
                 await cur.close()
-            
+
             #!await self.execute_query(query, conn) #! This doesn't work for some reason
- 
+
             print(f"[Database] Added entry to {table}: {data}")
-    
+
         async def update_entry(self, table: str, data: dict, conn: aiomysql.Connection):
             columns = ", ".join(data.keys())
             placeholders = ", ".join(["%s"] * len(data))
             values = tuple(data.values())
             query = f"UPDATE {table} SET {columns} = {placeholders}"
-            
+
             await self.execute_query(query, conn, values)
             print(f"[Database] Updated entry in {table}: {data}")
 
-
         # Execute generic SQL query
-        async def execute_query(self, query: str, conn: aiomysql.Connection, values: tuple = None):
+        async def execute_query(
+            self, query: str, conn: aiomysql.Connection, values: tuple = None
+        ):
             async with conn.cursor() as cur:
-                await cur.execute(query, values)    
+                await cur.execute(query, values)
                 result = await cur.fetchall()
                 description = cur.description
                 await cur.close()
@@ -351,7 +358,7 @@ class SplatBot(commands.Bot):
             )
 
             print(f"[Database] Done reading all tables!\n{self.data}")
-            
+
         # Autmatically connect and read all tables
         async def update_db(self):
             conn = await self.auto_connect()
@@ -360,8 +367,6 @@ class SplatBot(commands.Bot):
                 return
             await self.read_all(conn)
             conn.close()
-            
-        
 
         class DbData:
             def __init__(self):
@@ -433,9 +438,11 @@ Admins: {self.admins}"""
             # Check if the database is set up correctly, loop until it is
             while not self.bot.db.working:
                 try:
-                    await self.test_connections(False) # Test all connections & credentials
-                    await self.check_then_format() # Check database is formatted correctly
-                    await self.bot.db.update_db() # Pull data from the database
+                    await self.test_connections(
+                        False
+                    )  # Test all connections & credentials
+                    await self.check_then_format()  # Check database is formatted correctly
+                    await self.bot.db.update_db()  # Pull data from the database
                 except Exception as e:
                     print(f"[Database Manager] Error setting up database: {e}")
                 if self.bot.db.working:
@@ -445,16 +452,17 @@ Admins: {self.admins}"""
                 )
                 await asyncio.sleep(15)
             print("[Database Manager] Database setup complete!")
-            
+
             if self.bot.db.data.is_data_empty():
-                print("[Database Manager] Warning! No data found in database, potentially due to a database error.")
+                print(
+                    "[Database Manager] Warning! No data found in database, potentially due to a database error."
+                )
                 return 1
             elif self.bot.db.working:
                 print("[Database Manager] Database is fully operational!")
                 return 2
             print("[Database Manager] Database setup failed!")
             return 0
-
 
         @commands.Cog.listener()
         async def on_ready(self):
@@ -741,7 +749,9 @@ Admins: {self.admins}"""
                 return
 
             if not self.bot.db.working:
-                print("[Guilds] Message received but database not set up correctly, ignoring...")
+                print(
+                    "[Guilds] Message received but database not set up correctly, ignoring..."
+                )
                 return
 
             db_changed = False
@@ -757,8 +767,7 @@ Admins: {self.admins}"""
                 )
                 if await self.add_guild(message.guild):
                     db_changed = True
-                
-                
+
             # Check if channel is registered
             channel_data = None
             for channel in self.bot.db.data.channels:
@@ -771,18 +780,23 @@ Admins: {self.admins}"""
                 )
                 if await self.add_channel(message.channel):
                     db_changed = True
-            
+
             if db_changed:
                 print("[Guilds] Database changed, pulling data...")
                 await self.bot.db.update_db()
-                
 
             # # Check if the message contains any banned words
             # if await self.check_banned_words(message):
             #     return
-        
+
         # Register a guild in the database
-        async def add_guild(self, guild: discord.Guild, owen_mode: bool = False, banned_words: bool = False, admin_mode: bool = False):
+        async def add_guild(
+            self,
+            guild: discord.Guild,
+            owen_mode: bool = False,
+            banned_words: bool = False,
+            admin_mode: bool = False,
+        ):
             try:
                 print(f"[Guilds] Adding guild {guild.name} to database...")
                 conn = await self.bot.db.auto_connect()
@@ -799,9 +813,14 @@ Admins: {self.admins}"""
             except Exception as e:
                 print(f"[Guilds] Error adding guild {guild.name} to database: {e}")
                 return False
-        
+
         # Register a channel in the database
-        async def add_channel(self, channel: discord.TextChannel, channel_mode: str = None, disable_banned_words: bool = False):
+        async def add_channel(
+            self,
+            channel: discord.TextChannel,
+            channel_mode: str = None,
+            disable_banned_words: bool = False,
+        ):
             try:
                 print(f"[Channels] Adding channel {channel.name} to database...")
                 conn = await self.bot.db.auto_connect()
@@ -816,15 +835,17 @@ Admins: {self.admins}"""
                 print(f"[Channels] Added channel {channel.name} to database")
                 return True
             except Exception as e:
-                print(f"[Channels] Error adding channel {channel.name} to database: {e}")
+                print(
+                    f"[Channels] Error adding channel {channel.name} to database: {e}"
+                )
                 return False
-            
+
     # Anti-Brainrot (Banned Words) Filter
     class AntiBrainrot(commands.Cog):
         def __init__(self, bot: "SplatBot"):
             self.bot = bot
             self.working = False
-        
+
         @commands.Cog.listener()
         async def on_ready(self):
             if len(self.bot.db.data.banned_words) == 0:
@@ -835,19 +856,19 @@ Admins: {self.admins}"""
                 print("[Anti-Brainrot] Banned words found!")
             self.working = True
             print("[Anti-Brainrot] Listening for banned words...")
-            
+
         @commands.Cog.listener()
         async def on_message(self, message: discord.Message):
             if not self.working:
                 print("[Anti-Brainrot] Banned words not set up correctly, ignoring...")
                 return
-            
+
             # Scan message for banned words
             found = await self.is_banned(message.content.lower())
-            
+
             if found == 0:
                 return
-            
+
             # Carry out punishment (5 minute timeout/detected word)
             timeout_length = len(found) * 5
             timeout = timedelta(minutes=timeout_length)
@@ -857,16 +878,19 @@ Admins: {self.admins}"""
                 color=discord.Color.red(),
             )
             for phrase in found:
-                embed.add_field(name="Matched", value=f"{phrase[0]} -> {phrase[1]}%", inline=False)
-            embed.set_footer(text="This server has a zero-tolerance policy for brainrot. If you believe this is a mistake, use the /report-brainrot command once your timeout is over.")
+                embed.add_field(
+                    name="Matched", value=f"{phrase[0]} -> {phrase[1]}%", inline=False
+                )
+            embed.set_footer(
+                text="This server has a zero-tolerance policy for brainrot. If you believe this is a mistake, use the /report-brainrot command once your timeout is over."
+            )
             try:
                 await message.reply("@everyone", embed=embed)
                 await message.author.timeout(timeout, reason="Used brainrot")
             except Exception as e:
                 embed.description = f"Your message contained a banned brainrot phrase. However, it appears you cannot be timed out. Please refrain from using brainrot in the future."
                 await message.reply("@everyone", embed=embed)
-            
-            
+
         async def is_banned(self, phrase: str) -> int:
             # Scan using fuzzy matching
             fuzzy_threshold = 80
@@ -874,21 +898,23 @@ Admins: {self.admins}"""
             found_banned = []
             for word in self.bot.db.data.banned_words:
                 if fuzzy_method(word["word"], phrase) >= fuzzy_threshold:
-                    found_banned.append((word["word"], fuzzy_method(word["word"], phrase)))
+                    found_banned.append(
+                        (word["word"], fuzzy_method(word["word"], phrase))
+                    )
             if len(found_banned) == 0:
                 return 0
-            
+
             # Scan for whitelist words
             for word in self.bot.db.data.whitelist:
                 if word["word"] in phrase:
                     return 0
-                
+
             # If we've reached this point, the phrase is banned
-            print(f"[Anti-Brainrot] Banned phrase detected: {phrase} (Matched: {found_banned})")
+            print(
+                f"[Anti-Brainrot] Banned phrase detected: {phrase} (Matched: {found_banned})"
+            )
             return len(found_banned)
-            
-            
-            
+
 
 load_dotenv()
 token = os.getenv("BOT_TOKEN")
