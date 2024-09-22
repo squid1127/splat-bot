@@ -42,11 +42,12 @@ class SplatBot(commands.Bot):
 
     # Add the cogs (commands and events)
     async def addCogs(self):
-        await self.add_cog(self.Tasks(self))
-        await self.add_cog(self.SplatCommands(self))
-        await self.add_cog(self.DMHandler(self))
-        await self.add_cog(self.DatabaseHandler(self))
-        await self.add_cog(self.GuildsCheck(self))
+        await self.add_cog(self.Tasks(self)) # Tasks -> Random status
+        await self.add_cog(self.SplatCommands(self)) # Misc commands -> Ping
+        await self.add_cog(self.DMHandler(self)) # Handle DMs -> Forward to DM threads
+        await self.add_cog(self.DatabaseHandler(self)) # Database <=> Discord Interactions -> Sync commands, test connections, perodic database tasks
+        await self.add_cog(self.GuildsCheck(self)) # Guilds & Channels -> Register guilds and channels based on messages
+        await self.add_cog(self.AntiBrainrot(self)) # Anti-Brainrot -> Banned words filter
 
     # Pre-run checks
     def pre_run_checks(self):
@@ -800,8 +801,9 @@ Admins: {self.admins}"""
             except Exception as e:
                 print(f"[Channels] Error adding channel {channel.name} to database: {e}")
                 return False
-        
-
+            
+    # Anti-Brainrot (Banned Words) Filter
+    class AntiBrainrot(commands.Cog):
 
 load_dotenv()
 token = os.getenv("BOT_TOKEN")
