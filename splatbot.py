@@ -1,4 +1,10 @@
-# Project: Splat [Discord] Bot
+"""
+Splat-Bot
+~~~~~~~~~
+A general-purpose Discord bot build using discord.py, and MySQL.
+
+:copyright: (c) 2024-present squid1127, warriordragonid
+"""
 
 # Packages & Imports
 # Discord Packages
@@ -16,6 +22,11 @@ import aiohttp
 import aiomysql
 import cryptography  # For database encryption
 
+# For web frontend
+from fastapi import FastAPI
+from pydantic import BaseModel
+import uvicorn
+
 # For random status
 import random
 
@@ -26,15 +37,21 @@ from fuzzywuzzy import fuzz
 from dotenv import load_dotenv
 import os
 
+# Downtime warning
+import downreport
 
 class SplatBot(commands.Bot):
-    def __init__(self, token: str, db_creds: list):
+    def __init__(self, token: str, shell: int, db_creds: list, web_port: int = None):
         # Initialize the bot
-        super().__init__(command_prefix="splat ", intents=discord.Intents.all())
+        super().__init__(command_prefix="splat:", intents=discord.Intents.all())
 
         # Variables
         self.token = token
         self.db = self.Database(creds=db_creds)
+        self.perms = self.Permissions(self)
+        self.web = self.WebUI(self, web_port)
+        self.shell = self.Shell(self, shell)
+
         # Add cogs
         asyncio.run(self.addCogs())
 
@@ -54,6 +71,9 @@ class SplatBot(commands.Bot):
         await self.add_cog(
             self.AntiBrainrot(self)
         )  # Anti-Brainrot -> Banned words filter
+        await self.add_cog(
+            self.ShellManager(self, self.shell)
+        )  # Shell -> Manage shell commands and input
 
     # Pre-run checks
     def pre_run_checks(self):
@@ -65,9 +85,14 @@ class SplatBot(commands.Bot):
     def run(self):
         self.pre_run_checks()
         print("[Core] Setting up database...")
-        asyncio.run(self.cogs["DatabaseHandler"].setup())
-        print("[Core] Running bot...")
-        super().run(self.token)
+        asyncio.run(
+            self.cogs["DatabaseHandler"].setup()
+        )  # Set up the database before running the bot
+        print("[Core] Starting bot & web server...")
+        asyncio.run(self.start())
+
+    async def start(self):
+        await asyncio.gather(self.web.run(), super().start(self.token))
 
     # Bot ready event
     async def on_ready(self):
@@ -75,6 +100,135 @@ class SplatBot(commands.Bot):
         print(f"[Core] Logged in as {self.user}")
 
     # * Classes & Cogs
+    # Discord shell
+    class Shell:
+        def __init__(self, bot: "SplatBot", channel_id: int):
+            self.bot = bot
+
+            self.channel_id = channel_id
+
+        # Start the shell
+        async def start(self):
+            try:
+                self.channel = self.bot.get_channel(self.channel_id)
+                print("[Shell] Shell channel found!")
+                print("[Shell] Starting logging...")
+                asyncio.sleep(1)
+                await self.log(f"Bot has successfully started. **Database**: {"working" if self.bot.db.working else "not working"}", title="Bot Started", msg_type="success", cog="Shell")
+            except:
+                print("[Shell] Shell channel not found!")
+                return
+
+        # Send a log message
+        async def log(
+            self,
+            message: str,
+            title: str = None,
+            msg_type: str = "info",
+            cog: str = None,
+        ):
+            if msg_type == "error":
+                color = discord.Color.red()
+            elif msg_type == "success":
+                color = discord.Color.green()
+            elif msg_type == "warning":
+                color = discord.Color.orange()
+            else:
+                color = discord.Color.blurple()
+            embed = discord.Embed(
+                title=f"[{msg_type.upper()}] {title}",
+                description=message,
+                color=color,
+            )
+            embed.set_author(name=cog)
+            embed.set_footer(text="Powered by Splat Bot")
+            await self.channel.send(("@everyone" if msg_type == "error" else ""),embed=embed)
+
+    class ShellManager(commands.Cog):
+        def __init__(self, bot: "SplatBot", shell: "SplatBot.Shell"):
+            self.bot = bot
+            self.shell = shell
+
+        @commands.Cog.listener()
+        async def on_ready(self):
+            print("[Shell Handler] Starting shell...")
+            await self.shell.start()
+
+        @commands.Cog.listener()
+        async def on_message(self, message: discord.Message):
+            if message.author.bot:
+                return
+            if message.channel.id == self.bot.shell.channel_id:
+                print(f"[Shell] {message.author}: {message.content}")
+                
+        async def enforce_shell_channel(self, ctx: commands.Context):
+            if ctx.channel.id != self.bot.shell.channel_id:
+                await ctx.send("This command can only be used in the shell channel.")
+                return False
+            return True
+                
+        # Shell only commands
+        @commands.command(name="shell_command")
+        async def shell_command(self, ctx: commands.Context, *, command: str):
+            if not await self.enforce_shell_channel(ctx):
+                return
+
+            # Execute the shell command
+            result = await self.execute_shell_command(command)
+            await ctx.send(f"Command executed: {command}\nResult: {result}")
+
+        async def execute_shell_command(self, command: str) -> str:
+            # Placeholder for actual shell command execution logic
+            # For example, you could use subprocess to run the command
+            return f"Executed: {command}"
+
+    # Manage Permissions
+    class Permissions:
+        def __init__(self, bot: "SplatBot"):
+            self.admins = []
+            self.bot = bot
+
+        def bot_admins(self):
+            return self.bot.db.data.admins
+
+        async def handle_check_bot_admin(
+            self,
+            interaction: discord.Interaction,
+            error_msg: str = "You must be an administator of splat-bot to use this command.",
+        ) -> bool:
+            bot_admins = self.bot_admins()
+            if len(bot_admins) == 0:
+                await interaction.response.send_message(
+                    "Bot admin list is empty. This is likely due to a database error. Please try again later.",
+                    ephemeral=True,
+                )
+                print("[Permissions] Bot admin list is empty")
+                return False
+            for admin in bot_admins:
+                if admin["discord_id"] == interaction.user.id:
+                    return True
+            await interaction.response.send_message(error_msg, ephemeral=True)
+
+        async def handle_check_perm(
+            self, interaction: discord.Interaction, has_perm: bool
+        ) -> bool:
+            # Check if dm
+            if interaction.guild is None:
+                await interaction.response.send_message(
+                    "This command can only be used in a server.", ephemeral=True
+                )
+                return False
+
+            if interaction.user.guild_permissions.administrator:
+                return True
+            if has_perm:
+                return True
+
+            await interaction.response.send_message(
+                "You do not have permission to use this command.", ephemeral=True
+            )
+            return False
+
     # Database class for interacting with the database
     class Database:
         def __init__(self, creds: list):
@@ -214,7 +368,7 @@ class SplatBot(commands.Bot):
                     channel_id BIGINT NOT NULL PRIMARY KEY,
                     name VARCHAR(255) NOT NULL,
                     guild_id BIGINT NOT NULL REFERENCES guilds(guild_id),
-                    channel_mode VARCHAR(255),
+                    channel_mode VARCHAR(255) DEFAULT 'Normal',
                     disable_banned_words BOOLEAN DEFAULT FALSE
                 );
                 """
@@ -818,7 +972,7 @@ Admins: {self.admins}"""
         async def add_channel(
             self,
             channel: discord.TextChannel,
-            channel_mode: str = None,
+            channel_mode: str = "Normal",
             disable_banned_words: bool = False,
         ):
             try:
@@ -839,6 +993,86 @@ Admins: {self.admins}"""
                     f"[Channels] Error adding channel {channel.name} to database: {e}"
                 )
                 return False
+
+        class ChannelModes(Enum):
+            Normal = "Normal"
+            BotAnnoucements = "Announcements"
+
+        # Modify channel settings
+        @app_commands.command(
+            name="channel-modify", description="Admins: Modify channel modes, etc."
+        )
+        @app_commands.describe(
+            channel="The channel to modify",
+            mode="The mode to set the channel to. Options: Normal, Announcements (Recieve annoucements about splat-bot) (More to come). BOT ADMIN only: DM Log, System Log, System Shell",
+        )
+        async def modify_channel(
+            self,
+            interaction: discord.Interaction,
+            channel: discord.TextChannel = None,
+            mode: ChannelModes = ChannelModes.Normal,
+            disable_banned_words: bool = False,
+        ):
+            if channel is None:
+                channel = interaction.channel
+
+            if not await self.bot.perms.handle_check_perm(
+                interaction, interaction.user.guild_permissions.manage_channels
+            ):
+                return
+
+            # Send bot is thinking indicator
+            await interaction.response.defer()
+
+            conn = await self.bot.db.auto_connect()
+            if conn is None:
+                await interaction.response.send_message(
+                    "Could not connect to backend database", ephemeral=True
+                )
+                return
+            channel_data = None
+            for channel in self.bot.db.data.channels:
+                if channel["channel_id"] == channel.id:
+                    channel_data = channel
+                    break
+            if not channel_data:
+                await interaction.response.send_message("Channel not found in database")
+                try:
+                    conn.close()
+                except:
+                    pass
+                return
+
+            channel_data["channel_mode"] = mode
+            channel_data["disable_banned_words"] = int(disable_banned_words)
+            try:
+                await self.bot.db.update_entry("channels", channel_data, conn)
+            except Exception as e:
+                await interaction.response.send_message(
+                    f"Error updating channel: {e}", ephemeral=True
+                )
+                try:
+                    conn.close()
+                except:
+                    pass
+                return
+
+            try:
+                await self.bot.db.update_db()
+            except Exception as e:
+                await interaction.response.send_message(
+                    f"Channel has be Channel successfully set to {mode} mode with banned words {'disabled' if disable_banned_words else 'enabled'}. However, the database could not be updated. Changes may take a while to reflect"
+                )
+                try:
+                    conn.close()
+                except:
+                    pass
+                return
+
+            await interaction.response.send_message(
+                f"Channel successfully set to {mode} mode with banned words {'disabled' if disable_banned_words else 'enabled'}"
+            )
+            conn.close()
 
     # Anti-Brainrot (Banned Words) Filter
     class AntiBrainrot(commands.Cog):
@@ -915,32 +1149,22 @@ Admins: {self.admins}"""
             )
             return len(found_banned)
 
+    # Flask-based web UI
+    class WebUI:
+        def __init__(self, bot: "SplatBot", host: str = "0.0.0.0", port: int = 3000):
+            self.bot = bot
+            self.app = FastAPI()
+            self.host = host
+            self.port = port
 
-load_dotenv()
-token = os.getenv("BOT_TOKEN")
-db_creds = [
-    {
-        "name": "Dev Database (Docker)",
-        "host": "mysql",
-        "user": os.getenv("MYSQL_USER"),
-        "password": os.getenv("MYSQL_PASSWORD"),
-        "db": os.getenv("MYSQL_DATABASE"),
-    },
-    {
-        "name": "Dev Database (localhost)",
-        "host": "localhost",
-        "user": os.getenv("MYSQL_USER"),
-        "password": os.getenv("MYSQL_PASSWORD"),
-        "db": os.getenv("MYSQL_DATABASE"),
-    },
-    # {
-    #     "name": "Dev Database (Tailscale)",
-    #     "host": "casaos.golden-hamlet.ts.net",
-    #     "user": os.getenv("MYSQL_USER"),
-    #     "password": os.getenv("MYSQL_PASSWORD"),
-    #     "db": os.getenv("MYSQL_DATABASE"),
-    # },
-]
+            @self.app.get("/")
+            async def read_root():
+                return {"Hello": "World"}
 
-splat = SplatBot(token=token, db_creds=db_creds)
-splat.run()
+        async def run(self):
+            config = uvicorn.Config(self.app, host="0.0.0.0", port=8000)
+            server = uvicorn.Server(config)
+            await server.serve()
+
+
+

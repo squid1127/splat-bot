@@ -3,3 +3,7 @@ python-dotenv
 aiohttp
 aiomysql
 fuzzywuzzy
+python-Levenshtein
+cryptography
+fastapi
+uvicorn
