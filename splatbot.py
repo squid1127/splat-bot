@@ -40,10 +40,11 @@ import os
 # Downtime warning
 import downreport
 
+
 class SplatBot(commands.Bot):
     def __init__(self, token: str, shell: int, db_creds: list, web_port: int = None):
         # Initialize the bot
-        super().__init__(command_prefix="splat:", intents=discord.Intents.all())
+        super().__init__(command_prefix="splat ", intents=discord.Intents.all())
 
         # Variables
         self.token = token
@@ -85,9 +86,11 @@ class SplatBot(commands.Bot):
     def run(self):
         self.pre_run_checks()
         print("[Core] Setting up database...")
-        asyncio.run(
+        db_success = asyncio.run(
             self.cogs["DatabaseHandler"].setup()
         )  # Set up the database before running the bot
+        if db_success == 0:
+            raise Exception("Database setup failed")
         print("[Core] Starting bot & web server...")
         asyncio.run(self.start())
 
@@ -113,20 +116,25 @@ class SplatBot(commands.Bot):
                 self.channel = self.bot.get_channel(self.channel_id)
                 print("[Shell] Shell channel found!")
                 print("[Shell] Starting logging...")
-                asyncio.sleep(1)
-                await self.log(f"Bot has successfully started. **Database**: {"working" if self.bot.db.working else "not working"}", title="Bot Started", msg_type="success", cog="Shell")
+                await asyncio.sleep(1)
+                await self.log(
+                    f"Bot has successfully started. **Database**: {'working' if self.bot.db.working else 'not working'}",
+                    title="Bot Started",
+                    msg_type="success",
+                    cog="Shell",
+                )
             except:
                 print("[Shell] Shell channel not found!")
                 return
 
-        # Send a log message
-        async def log(
+        async def create_embed(
             self,
             message: str,
             title: str = None,
             msg_type: str = "info",
             cog: str = None,
         ):
+
             if msg_type == "error":
                 color = discord.Color.red()
             elif msg_type == "success":
@@ -142,8 +150,22 @@ class SplatBot(commands.Bot):
             )
             embed.set_author(name=cog)
             embed.set_footer(text="Powered by Splat Bot")
-            await self.channel.send(("@everyone" if msg_type == "error" else ""),embed=embed)
+            return embed
 
+        # Send a log message
+        async def log(
+            self,
+            message: str,
+            title: str = None,
+            msg_type: str = "info",
+            cog: str = None,
+        ):
+            embed = await self.create_embed(message, title, msg_type, cog)
+            await self.channel.send(
+                ("@everyone" if msg_type == "error" else ""), embed=embed
+            )
+
+    # Shell commands
     class ShellManager(commands.Cog):
         def __init__(self, bot: "SplatBot", shell: "SplatBot.Shell"):
             self.bot = bot
@@ -154,33 +176,282 @@ class SplatBot(commands.Bot):
             print("[Shell Handler] Starting shell...")
             await self.shell.start()
 
+            # Regester shell commands
+            await self.bot.add_command(self.shell_command)
+            await self.bot.add_command(self.stop_bot)
+
         @commands.Cog.listener()
         async def on_message(self, message: discord.Message):
             if message.author.bot:
                 return
-            if message.channel.id == self.bot.shell.channel_id:
-                print(f"[Shell] {message.author}: {message.content}")
-                
+            if message.channel.id != self.bot.shell.channel_id:
+                return
+
         async def enforce_shell_channel(self, ctx: commands.Context):
             if ctx.channel.id != self.bot.shell.channel_id:
-                await ctx.send("This command can only be used in the shell channel.")
                 return False
             return True
-                
+
         # Shell only commands
-        @commands.command(name="shell_command")
+        # Manage db
+        @commands.command(name="db")
         async def shell_command(self, ctx: commands.Context, *, command: str):
             if not await self.enforce_shell_channel(ctx):
                 return
 
-            # Execute the shell command
-            result = await self.execute_shell_command(command)
-            await ctx.send(f"Command executed: {command}\nResult: {result}")
+            # Pull data from the database
+            if command.startswith("pull") or command.startswith("update"):
+                command = command.split(" ")[1:]
+                print("[Shell Manager] DB Pull command received")
+                try:
+                    conn = await self.bot.db.auto_connect()
+                    await self.bot.db.pull_all(conn)
+                except Exception as e:
+                    print(f"[Shell Manager] Error pulling database: {e}")
+                    embed = await self.shell.create_embed(
+                        f"An error was encountered when pulling the database: {e}",
+                        title="Database Pull Error",
+                        msg_type="error",
+                        cog="Shell Manager -> Database",
+                    )
+                    await ctx.send(embed=embed)
+                else:
+                    print("[Shell Manager] Database pulled!")
+                    embed = await self.shell.create_embed(
+                        "All database data has been successfully pulled from MYSQL.",
+                        title="Database Updated",
+                        msg_type="success",
+                        cog="Shell Manager -> Database",
+                    )
+                    embed = self.bot.db.data.embed_fields(embed)
+                    await ctx.send(embed=embed)
+                conn.close()
 
-        async def execute_shell_command(self, command: str) -> str:
-            # Placeholder for actual shell command execution logic
-            # For example, you could use subprocess to run the command
-            return f"Executed: {command}"
+                print("[Shell Manager] CMD Finished")
+                return
+
+            # List current database data
+            if command.startswith("list") or command.startswith("ls"):
+                print("[Shell Manager] DB List command received")
+                embed = await self.shell.create_embed(
+                    "Showing all database data...",
+                    title="Database Data",
+                    msg_type="info",
+                    cog="Shell Manager -> Database",
+                )
+                embed = self.bot.db.data.embed_fields(embed)
+                await ctx.send(embed=embed)
+                print("[Shell Manager] CMD Finished")
+                return
+
+            # Test all database connections
+            if command.startswith("test"):
+                print("[Shell Manager] DB Test command received")
+                try:
+                    await self.bot.db.test_all_connections()
+                except Exception as e:
+                    print(f"[Shell Manager] Error testing database connections: {e}")
+                    embed = await self.shell.create_embed(
+                        f"An error was encountered when testing database connections: {e}",
+                        title="Database Test Error",
+                        msg_type="error",
+                        cog="Shell Manager -> Database",
+                    )
+                    await ctx.send(embed=embed)
+                else:
+                    print("[Shell Manager] Database connections tested!")
+                    embed = await self.shell.create_embed(
+                        "Database connections tested successfully!",
+                        title="Database Test Complete",
+                        msg_type="success",
+                        cog="Shell Manager -> Database",
+                    )
+                    functioning_creds = ""
+                    for cred in self.bot.db.functioning_creds:
+                        functioning_creds += f"\n- {cred['name']}{' <- In use' if cred['name'] == self.bot.db.last_used_cred['name'] else ''}"
+                    embed.add_field(
+                        name="Functioning Credentials",
+                        value=functioning_creds,
+                        inline=False,
+                    )
+                    await ctx.send(embed=embed)
+                print("[Shell Manager] CMD Finished")
+                return
+
+            if command.startswith("add"):
+                command = " ".join(command.split(" ")[1:])
+                if not (command.startswith("banned") or command.startswith(
+                    "whitelist"
+                )):
+                    embed = await self.shell.create_embed(
+                        "Invalid command. Use `banned` or `whitelist` to add a word to the banned words or whitelist list. Example: `splat db add banned sigma`",
+                        title="Syntax Error",
+                        msg_type="error",
+                        cog="Shell Manager -> Database",
+                    )
+                    await ctx.send(embed=embed)
+                    return
+
+                table = "banned_words" if command.startswith("banned") else "whitelist"
+
+                command = " ".join(command.split(" ")[1:])
+                conn = await self.bot.db.auto_connect()
+                if conn is None:
+                    embed = await self.shell.create_embed(
+                        "No working database connections. To test connections, use `splat db test`.",
+                        title="Database Error",
+                        msg_type="error",
+                        cog="Shell Manager -> Database",
+                    )
+                    await ctx.send(embed=embed)
+                    return
+
+                try:
+                    await self.bot.db.add_entry(table, {"word": command}, conn)
+                except Exception as e:
+                    embed = await self.shell.create_embed(
+                        f"An error was encountered when adding the word `{command}` to the banned words list: {e}",
+                        title="Database Error",
+                        msg_type="error",
+                        cog="Shell Manager -> Database",
+                    )
+                    await ctx.send(embed=embed)
+                    return
+                try:
+                    await self.bot.db.update_db()
+                except Exception as e:
+                    embed = await self.shell.create_embed(
+                        f"Word `{command}` added to the banned words list, but an error was encountered when updating the database: {e}. Changes may not be reflected immediately.",
+                        title="Database Error",
+                        msg_type="error",
+                        cog="Shell Manager -> Database",
+                    )
+                    await ctx.send(embed=embed)
+                    return
+
+                if table == "banned_words":
+                    success = command in [
+                        word["word"] for word in self.bot.db.data.banned_words
+                    ]
+                else:
+                    success = command in [
+                        word["word"] for word in self.bot.db.data.whitelist
+                    ]
+
+                if success:
+                    embed = await self.shell.create_embed(
+                        f"Word `{command}` added to the {'banned list' if table == 'banned_words' else 'whitelist'} successfully!",
+                        title="Database Updated",
+                        msg_type="success",
+                        cog="Shell Manager -> Database",
+                    )
+                    await ctx.send(embed=embed)
+                else:
+                    embed = await self.shell.create_embed(
+                        f"An unknown error was encountered when adding the word `{command}` to the {'banned list' if table == 'banned_words' else 'whitelist'}.",
+                        title="Database Error",
+                        msg_type="error",
+                        cog="Shell Manager -> Database",
+                    )
+                    await ctx.send(embed=embed)
+                    
+                conn.close()
+                return
+            
+            if command.startswith("remove") or command.startswith("rm"):
+                command = " ".join(command.split(" ")[1:])
+                if not (command.startswith("banned") or command.startswith(
+                    "whitelist"
+                )):
+                    embed = await self.shell.create_embed(
+                        "Invalid command. Use `banned` or `whitelist` to remove a word from the banned words or whitelist list. Example: `splat db remove banned sigma`",
+                        title="Syntax Error",
+                        msg_type="error",
+                        cog="Shell Manager -> Database",
+                    )
+                    await ctx.send(embed=embed)
+                    return
+
+                table = "banned_words" if command.startswith("banned") else "whitelist"
+
+                command = " ".join(command.split(" ")[1:])
+                conn = await self.bot.db.auto_connect()
+                if conn is None:
+                    embed = await self.shell.create_embed(
+                        "No working database connections. To test connections, use `splat db test`.",
+                        title="Database Error",
+                        msg_type="error",
+                        cog="Shell Manager -> Database",
+                    )
+                    await ctx.send(embed=embed)
+                    return
+
+                if table == "banned_words":
+                    words = [word["word"] for word in self.bot.db.data.banned_words]
+                else:
+                    words = [word["word"] for word in self.bot.db.data.whitelist]
+
+                if command not in words:
+                    embed = await self.shell.create_embed(
+                        f"Word `{command}` not found in the {'banned list' if table == 'banned_words' else 'whitelist'}.",
+                        title="Database Error",
+                        msg_type="error",
+                        cog="Shell Manager -> Database",
+                    )
+                    await ctx.send(embed=embed)
+                    return
+
+                try:
+                    query = f"DELETE FROM {table} WHERE word = %s"
+                    await self.bot.db.execute_query(query, conn, (command,))
+                except Exception as e:
+                    embed = await self.shell.create_embed(
+                        f"An error was encountered when removing the word `{command}` from the {'banned list' if table == 'banned_words' else 'whitelist'}: {e}",
+                        title="Database Error",
+                        msg_type="error",
+                        cog="Shell Manager -> Database",
+                    )
+                    await ctx.send(embed=embed)
+                    return
+                try:
+                    await self.bot.db.update_db()
+                except Exception as e:
+                    embed = await self.shell.create
+
+            embed = await self.shell.create_embed(
+                "Preform datbase tasks.",
+                title="Database Command Usage",
+                msg_type="info",
+                cog="Shell Manager -> Database",
+            )
+            embed.add_field(
+                name="Commands",
+                value="- `pull` - Pull all data from the database\n- `list` - List all data in the database without pulling\n- `test` - Test all database connections",
+                inline=False,
+            )
+            await ctx.send(embed=embed)
+            
+        @commands.command(name="stop")
+        async def stop_bot(self, ctx: commands.Context, *, command: str = None):
+            if not command.startswith("**confirm**"):
+                embed = await self.shell.create_embed(
+                    "To stop the bot, use `splat stop **confirm**`.",
+                    title="Stop Bot",
+                    msg_type="warning",
+                    cog="Shell Manager -> Bot",
+                )
+                await ctx.send(embed=embed)
+                return
+            
+            embed = await self.shell.create_embed(
+                "Bot stopping...",
+                title="Bot Stopping",
+                msg_type="warning",
+                cog="Shell Manager -> Bot",
+            )
+            await ctx.send(embed=embed)
+            print("[Shell Manager] Stopping bot...")
+            await self.bot.close()
 
     # Manage Permissions
     class Permissions:
@@ -235,6 +506,7 @@ class SplatBot(commands.Bot):
             self.creds = creds
             self.working = False
             self.data = self.DbData()
+            self.last_used_cred = None
 
         # Check if credentials are set (not empty)
         def creds_check(self) -> bool:
@@ -285,6 +557,7 @@ class SplatBot(commands.Bot):
                     password=cred["password"],
                     db=cred["db"],
                 )
+                self.last_used_cred = cred
                 return conn
             except Exception as e:
                 print(f"[Database] Connection to {cred['name']} failed: {e}")
@@ -494,7 +767,7 @@ class SplatBot(commands.Bot):
             ]
 
         # Read and update all tables
-        async def read_all(self, conn: aiomysql.Connection):
+        async def pull_all(self, conn: aiomysql.Connection):
             print("[Database] Reading all tables...")
             guilds = await self.read_table("guilds", conn)
             channels = await self.read_table("channels", conn)
@@ -519,7 +792,7 @@ class SplatBot(commands.Bot):
             if conn is None:
                 print("[Database] No working database connections")
                 return
-            await self.read_all(conn)
+            await self.pull_all(conn)
             conn.close()
 
         class DbData:
@@ -540,6 +813,60 @@ Channels: {self.channels}
 Banned Words: {self.banned_words}
 Whitelist: {self.whitelist}
 Admins: {self.admins}"""
+
+            def embed_fields(self, embed: discord.Embed = None):
+                print("[Database Data] Generating embed fields...")
+                try:
+                    banned_words = [word["word"] for word in self.banned_words]
+                    whitelist = [word["word"] for word in self.whitelist]
+                    admins = [admin["name"] for admin in self.admins]
+                    guilds = [guild["name"] for guild in self.guilds]
+                    print(self.guilds, self.channels)
+                    channels = [
+                        f"{guild['name']} -> {channel['name']}"
+                        for channel in self.channels
+                        for guild in self.guilds
+                        if guild["guild_id"] == channel["guild_id"]
+                    ]
+                except Exception as e:
+                    print(f"[Database Data] Error generating embed fields: {e}")
+                    return embed
+                fields = [
+                    {
+                        "name": "Banned Words",
+                        "value": "- " + "\n- ".join(map(str, banned_words)),
+                        "inline": False,
+                    },
+                    {
+                        "name": "Whitelist",
+                        "value": "- " + "\n- ".join(map(str, whitelist)),
+                        "inline": False,
+                    },
+                    {
+                        "name": "Admins",
+                        "value": "- " + "\n- ".join(map(str, admins)),
+                        "inline": False,
+                    },
+                    {
+                        "name": "Guilds",
+                        "value": "- " + "\n- ".join(map(str, guilds)),
+                        "inline": False,
+                    },
+                    {
+                        "name": "Channels",
+                        "value": "- " + "\n- ".join(map(str, channels)),
+                        "inline": False,
+                    },
+                ]
+                if embed:
+                    for field in fields:
+                        print(field)
+                        embed.add_field(
+                            name=field["name"], value=field["value"], inline=False
+                        )
+                    return embed
+                print("[Database Data] Done generating embed fields!")
+                return fields
 
             def update(
                 self,
@@ -590,6 +917,7 @@ Admins: {self.admins}"""
             print("[Database Manager] Attempting to set up database...")
 
             # Check if the database is set up correctly, loop until it is
+            attempts = 0
             while not self.bot.db.working:
                 try:
                     await self.test_connections(
@@ -604,6 +932,10 @@ Admins: {self.admins}"""
                 print(
                     "[Database Manager] Connection to database failed, retrying in 15 seconds..."
                 )
+                attempts += 1
+                if attempts > 5:
+                    print("[Database Manager] Database setup failed!")
+                    return 0
                 await asyncio.sleep(15)
             print("[Database Manager] Database setup complete!")
 
@@ -653,7 +985,7 @@ Admins: {self.admins}"""
                 print("[Database Manager] No working database connections")
                 return
             try:
-                await self.bot.db.read_all(conn)
+                await self.bot.db.pull_all(conn)
             except Exception as e:
                 print(f"[Database Manager] Error pulling data: {e}")
             else:
@@ -746,7 +1078,9 @@ Admins: {self.admins}"""
         @commands.Cog.listener()
         async def on_ready(self):
             print("[Commands] Syncing commands...")
+            # Sync app commands
             self.commands_list = await self.bot.tree.sync()
+            # Sync non-app commands
             print(f"[Commands] {len(self.commands_list)} Commands synced!")
 
         @app_commands.command(name="ping", description="Check if bot is online")
@@ -1098,32 +1432,37 @@ Admins: {self.admins}"""
                 return
 
             # Scan message for banned words
-            found = await self.is_banned(message.content.lower())
-
-            if found == 0:
+            found = await self.is_banned(message.content.lower())            
+            if len(found) == 0:
                 return
 
             # Carry out punishment (5 minute timeout/detected word)
             timeout_length = len(found) * 5
+            print(f"[Anti-Brainrot] Detected banned words in message, timing out for {timeout_length} minutes")
             timeout = timedelta(minutes=timeout_length)
+            print("debug 0")
             embed = discord.Embed(
                 title="Anti-Brainrot",
                 description=f"Your message contained a banned brainrot phrase. You have been timed out for {timeout_length} minutes.",
                 color=discord.Color.red(),
             )
+            print("debug 1")
             for phrase in found:
+                print("debug 1.5")
                 embed.add_field(
                     name="Matched", value=f"{phrase[0]} -> {phrase[1]}%", inline=False
                 )
+            print("debug 2")
             embed.set_footer(
                 text="This server has a zero-tolerance policy for brainrot. If you believe this is a mistake, use the /report-brainrot command once your timeout is over."
             )
+            print("[Anti-Brainrot] Attempting to time out user...")
             try:
-                await message.reply("@everyone", embed=embed)
                 await message.author.timeout(timeout, reason="Used brainrot")
-            except Exception as e:
+                await message.reply(embed=embed)
+            except discord.Forbidden:
                 embed.description = f"Your message contained a banned brainrot phrase. However, it appears you cannot be timed out. Please refrain from using brainrot in the future."
-                await message.reply("@everyone", embed=embed)
+                await message.reply(embed=embed)
 
         async def is_banned(self, phrase: str) -> int:
             # Scan using fuzzy matching
@@ -1147,7 +1486,7 @@ Admins: {self.admins}"""
             print(
                 f"[Anti-Brainrot] Banned phrase detected: {phrase} (Matched: {found_banned})"
             )
-            return len(found_banned)
+            return found_banned
 
     # Flask-based web UI
     class WebUI:
@@ -1165,6 +1504,3 @@ Admins: {self.admins}"""
             config = uvicorn.Config(self.app, host="0.0.0.0", port=8000)
             server = uvicorn.Server(config)
             await server.serve()
-
-
-
