@@ -22,15 +22,7 @@ services:
       - .env
     tty: true
     stdin_open: true
-  popsql-bridge-client:
-    container_name: popsql-bridge-client
-    env_file:
-      - .env
-    environment:
-      - ALLOW=mysql:3306,localhost:3306,internal_server:3306
-    network_mode: host
-    image: ghcr.io/timescale/popsql-bridge-client:latest
-
+ 
 networks:
   bot-net:
     driver: bridge
