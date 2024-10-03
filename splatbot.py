@@ -20,6 +20,7 @@ from enum import Enum  # For enums (select menus)
 import asyncio
 import aiohttp
 import aiomysql
+import tabulate  # For tabular data
 import cryptography  # For database encryption
 
 # For web frontend
@@ -35,6 +36,7 @@ from fuzzywuzzy import fuzz
 
 # Downtime warning
 import downreport
+
 
 class SplatBot(commands.Bot):
     def __init__(self, token: str, shell: int, db_creds: list, web_port: int = None):
@@ -130,6 +132,7 @@ class SplatBot(commands.Bot):
             self.bot = bot
 
             self.channel_id = channel_id
+            self.interactive_mode = None
 
         # Start the shell
         async def start(self):
@@ -202,7 +205,13 @@ class SplatBot(commands.Bot):
                 else:
                     self.channel = self.shell.channel
 
-            async def info(self, description: str, title: str, fields: list = None):
+            async def info(
+                self,
+                description: str,
+                title: str,
+                fields: list = None,
+                footer: str = None,
+            ):
                 embed = await self.shell.create_embed(
                     description, title, "info", self.cog
                 )
@@ -213,9 +222,17 @@ class SplatBot(commands.Bot):
                             value=field["value"],
                             inline=field.get("inline", False),
                         )
+                if footer:
+                    embed.set_footer(text=footer)
                 await self.channel.send(embed=embed)
 
-            async def success(self, description: str, title: str, fields: list = None):
+            async def success(
+                self,
+                description: str,
+                title: str,
+                fields: list = None,
+                footer: str = None,
+            ):
                 embed = await self.shell.create_embed(
                     description, title, "success", self.cog
                 )
@@ -226,9 +243,17 @@ class SplatBot(commands.Bot):
                             value=field["value"],
                             inline=field.get("inline", False),
                         )
+                if footer:
+                    embed.set_footer(text=footer)
                 await self.channel.send(embed=embed)
 
-            async def error(self, description: str, title: str, fields: list = None):
+            async def error(
+                self,
+                description: str,
+                title: str,
+                fields: list = None,
+                footer: str = None,
+            ):
                 embed = await self.shell.create_embed(
                     description, title, "error", self.cog
                 )
@@ -239,9 +264,17 @@ class SplatBot(commands.Bot):
                             value=field["value"],
                             inline=field.get("inline", False),
                         )
+                if footer:
+                    embed.set_footer(text=footer)
                 await self.channel.send(embed=embed)
 
-            async def warning(self, description: str, title: str, fields: list = None):
+            async def warning(
+                self,
+                description: str,
+                title: str,
+                fields: list = None,
+                footer: str = None,
+            ):
                 embed = await self.shell.create_embed(
                     description, title, "warning", self.cog
                 )
@@ -252,8 +285,13 @@ class SplatBot(commands.Bot):
                             value=field["value"],
                             inline=field.get("inline", False),
                         )
+                if footer:
+                    embed.set_footer(text=footer)
 
                 await self.channel.send(embed=embed)
+                
+            async def raw(self, *args, **kwargs):
+                await self.channel.send(*args, **kwargs)
 
     # Shell commands
     class ShellManager(commands.Cog):
@@ -273,11 +311,57 @@ class SplatBot(commands.Bot):
             # await self.bot.add_command(self.shell_command)
             # await self.bot.add_command(self.stop_bot)
 
+        # Shell command listener
         @commands.Cog.listener()
         async def on_message(self, message: discord.Message):
             if message.author.bot:
                 return
             if message.channel.id != self.bot.shell.channel_id:
+                return
+            
+            await self.process_shell(message)
+            
+        # Shell command listener but message edited
+        @commands.Cog.listener()
+        async def on_message_edit(self, before: discord.Message, after: discord.Message):
+            if before.author.bot:
+                return
+            if before.channel.id != self.bot.shell.channel_id:
+                return
+            await self.process_shell(after)
+            
+        # Process shell commands
+        async def process_shell(self, message: discord.Message):
+            if self.shell.interactive_mode:
+                if message.content == "~exit":
+                    self.shell.interactive_mode = None
+                    await self.shell.log(
+                        "Exited interactive mode",
+                        title="Interactive Mode",
+                        msg_type="info",
+                    )
+                    return
+                try:
+                    cog = self.shell.interactive_mode[0]
+
+                    await self.bot.cogs[cog].shell_callback(
+                        self.shell.interactive_mode[1],
+                        message.content,
+                        self.shell.ShellCommand(
+                            self.shell.interactive_mode[1],
+                            cog,
+                            self.shell,
+                            message.channel,
+                        ),
+                    )
+                except Exception as e:
+                    print(f"[Shell Manager] Shell interactive_mode error: {e}")
+                    await self.shell.log(
+                        f"Failed to execute command in interactive mode: {e}\n Use ~exit to exit interactive mode",
+                        title="Interactive Mode Error",
+                        msg_type="error",
+                        cog="ShellManager",
+                    )
                 return
 
             if not message.content.startswith("splat "):
@@ -335,7 +419,7 @@ class SplatBot(commands.Bot):
                         f"An error was encountered when fetching help: {e}",
                         title="Help Error",
                     )
-                    
+
         @commands.Cog.listener()
         async def on_error(self, event, *args, **kwargs):
             print(f"[Shell Manager] Error in event {event}: {args[0]}")
@@ -655,7 +739,9 @@ class SplatBot(commands.Bot):
 
             print(f"[Database] Added entry to {table}: {data}")
 
-        async def update_entry(self, table: str, target: dict, data: dict, conn: aiomysql.Connection):
+        async def update_entry(
+            self, table: str, target: dict, data: dict, conn: aiomysql.Connection
+        ):
             """Update an entry in a table, such as changing "sigma" to "owen" in the brainrot table"""
 
             columns = ", ".join(data.keys())
@@ -667,9 +753,7 @@ class SplatBot(commands.Bot):
             query = f"UPDATE {table} SET {columns} = {placeholders} WHERE {target_columns} = {target_placeholders}"
             await self.execute_query(query, conn, values + target_values)
             print(f"[Database] Updated entry in {table}: {target} -> {data}")
-            
-            
-            
+
         async def delete_entry(self, table: str, data: dict, conn: aiomysql.Connection):
             """Delete an entry from a table, such as removing "sigma" from the brainrot table"""
             columns = ", ".join(data.keys())
@@ -681,23 +765,41 @@ class SplatBot(commands.Bot):
 
         # Execute generic SQL query
         async def execute_query(
-            self, query: str, conn: aiomysql.Connection, values: tuple = None
+            self,
+            query: str,
+            conn: aiomysql.Connection,
+            values: tuple = None,
+            pretty_table: bool = True,
         ):
             """Execute a generic SQL query, such as `SELECT * FROM table`"""
             print(f"[Database] Executing query: {query} ({values})")
-            
+
             async with conn.cursor() as cur:
                 await cur.execute(query, values)
                 result = await cur.fetchall()
                 description = cur.description
+
                 await cur.close()
 
             if result:
+                if pretty_table:
+                    try:
+                        table = tabulate.tabulate(
+                            result,
+                            headers=[column[0] for column in description],
+                            tablefmt="simple_grid",
+                        )
+                        print(f"[Database] Query result is a table:\n{table}")
+                        return table
+                    except:
+                        pass
                 try:
+                    print(f"[Database] Query result is a list of dictionaries")
                     return await self.convert_to_dict(result, description)
                 except:
                     pass
-            return result
+            print(f"[Database] Query result is unknown")
+            return result, description
 
         async def convert_to_dict(self, result: list, description: list):
             """Convert a SQL result to a list of dictionaries, with column names as keys"""
@@ -740,6 +842,7 @@ class SplatBot(commands.Bot):
 
         class DbData:
             """Database data object, stores all data from the database"""
+
             def __init__(self):
                 # Database tables
                 self.guilds = []
@@ -863,24 +966,22 @@ Admins: {self.admins}"""
                 self.admins = []
                 self.config = []
                 self.write_count = 0
-                
+
             # Config table functions
-                
+
             def config_has(self, name: str):
                 """Check if a config entry exists"""
                 for entry in self.config:
                     if entry["name"] == name:
                         return True
                 return False
-            
+
             def config_get(self, name: str):
                 """Get a config entry value"""
                 for entry in self.config:
                     if entry["name"] == name:
                         return entry["value"]
                 return None
-        
-                
 
     # Facilitate database-related discord commands & interactions
     class DatabaseHandler(commands.Cog):
@@ -1086,20 +1187,26 @@ Admins: {self.admins}"""
                         return
                     else:
                         print("[Database Manager] Query executed!")
-                        fields = [
-                            {
-                                "name": "Result",
-                                "value": f"```python\n{result}\n```",
-                                "inline": False,
-                            }
-                        ]
-                        await shell_command.success(
-                            "Query executed successfully.",
-                            title="Query Executed",
-                            fields=fields,
-                        )
                         conn.close()
+
+                        await shell_command.success(
+                            "Query executed.\n```python\n" + result + "\n```",
+                            title="Query Executed",
+                        )
                         return
+                if query.startswith("shell"):
+                    print("[Database Manager] DB Shell command received")
+                    await shell_command.info(
+                        "You are now in the database shell. Type `~exit` to exit.",
+                        title="Database Shell",
+                    )
+
+                    self.bot.shell.interactive_mode = (
+                        "DatabaseHandler",
+                        "db_shell_callback",
+                    )
+
+                    return
 
                 if query.startswith("list") or query.startswith("ls"):
                     print("[Database Manager] List command received")
@@ -1134,7 +1241,7 @@ Admins: {self.admins}"""
                     fields = [
                         {
                             "name": "Commands",
-                            "value": "**pull**: Pull data from the database\n**test**: Test all database connections\n**exec [query]**: Execute a query\n**list**: List all tables & data in the database",
+                            "value": "**pull**: Pull data from the database\n**test**: Test all database connections\n**exec [query]**: Execute a query\n**list**: List all tables & data in the database\n**shell**: Enter the database shell",
                             "inline": False,
                         }
                     ]
@@ -1231,6 +1338,45 @@ Admins: {self.admins}"""
                     title="Database Status",
                     fields=fields,
                 )
+
+            # Interactive mode -> Database shell
+            elif command == "db_shell_callback":
+                try:
+                    conn = await self.bot.db.auto_connect()
+                    result = await self.bot.db.execute_query(query, conn)
+                except Exception as e:
+                    try:
+                        conn.close()
+                    except:
+                        pass
+                    print(f"[Database Manager] Error executing query: {e}")
+                    possible_errors = {
+                        1064: "Syntax Error",
+                        1146: "Table Not Found",
+                        1045: "Access Denied",
+                    }
+                    
+                    error = possible_errors.get(e.args[0])
+                    if error:
+                        message = f'{error} ({e.args[0]}): "{e.args[1]}"'
+                    else:
+                        message = f'Error {e.args[0]}: "{e.args[1]}"'
+                    await shell_command.raw("```python\n" + message + "\n```\nTip: To exit the shell, type `~exit`")
+                    return
+                else:
+                    print("[Database Manager] Query executed!")
+                    conn.close()
+                    # is result a list?
+                    if isinstance(result, list):
+                        print("[Database Manager] Result is a list")
+                        print(result)
+                        result = tabulate.tabulate(result, tablefmt="simple_grid")
+                    if isinstance(result, tuple):
+                        print("[Database Manager] Result is a tuple")
+                        print(result)
+                        result = f"Result: {result[0]}\nDescription: {result[1]}"
+                    await shell_command.raw("```\n" + result + "\n```")
+                    return
 
     # Bot events (on_ready, on_message, etc.)
     class Tasks(commands.Cog):
@@ -1641,7 +1787,9 @@ Admins: {self.admins}"""
                     brainrot = bool(key["value"])
                     break
             if not brainrot:
-                print("[Anti-Brainrot] Brainrot filter disabled globally. To enable, use command `splat brainrot on` in the shell.")
+                print(
+                    "[Anti-Brainrot] Brainrot filter disabled globally. To enable, use command `splat brainrot on` in the shell."
+                )
             else:
                 print("[Anti-Brainrot] Listening for banned words...")
 
@@ -1652,11 +1800,11 @@ Admins: {self.admins}"""
             if not self.working:
                 print("[Anti-Brainrot] Banned words not set up correctly, ignoring...")
                 return
-            
+
             if not bool(self.bot.db.data.config_get("enable_brainrot")):
                 print("[Anti-Brainrot] Brainrot filter disabled globally, ignoring...")
                 return
-                
+
             # Scan message for banned words
             found = await self.is_banned(message.content.lower())
             if found == 0:
@@ -1725,11 +1873,13 @@ Admins: {self.admins}"""
         async def shell_callback(
             self, command: str, query: str, shell_command: "SplatBot.Shell.ShellCommand"
         ):
-            print(
-                f"[Anti-Brainrot] Recieved shell command: {command} | Query: {query}"
-            )
-            if command == 'brainrot' or command == 'br':
-                if query.startswith("ban") or query.startswith("whitelist") or query.startswith("wl"):
+            print(f"[Anti-Brainrot] Recieved shell command: {command} | Query: {query}")
+            if command == "brainrot" or command == "br":
+                if (
+                    query.startswith("ban")
+                    or query.startswith("whitelist")
+                    or query.startswith("wl")
+                ):
                     if query.startswith("ban"):
                         table = "banned"
                     elif query.startswith("whitelist") or query.startswith("wl"):
@@ -1739,7 +1889,7 @@ Admins: {self.admins}"""
                     #         "Invalid list. Use `banned` or `whitelist`", title="Invalid List"
                     #     )
                     #     return
-                    word = ' '.join(query.split(" ")[1:])
+                    word = " ".join(query.split(" ")[1:])
                     print(f"[Anti-Brainrot] Adding banned word: {word}")
                     try:
                         conn = await self.bot.db.auto_connect()
@@ -1748,7 +1898,9 @@ Admins: {self.admins}"""
                             {"word": word},
                             conn=conn,
                         )
-                        print(f"[Anti-Brainrot] Word added to {table}, updating database...")
+                        print(
+                            f"[Anti-Brainrot] Word added to {table}, updating database..."
+                        )
                         await self.bot.db.update_all_auto()
                     except Exception as e:
                         print(f"[Anti-Brainrot] Error adding word to {table}: {e}")
@@ -1757,52 +1909,65 @@ Admins: {self.admins}"""
                             title="Failed to Add Word",
                         )
                         return
-                    
+
                     if table == "whitelist":
-                        if not word in [word['word'] for word in self.bot.db.data.whitelist]:
-                            print(f"[Anti-Brainrot] Word added but not found in database")
+                        if not word in [
+                            word["word"] for word in self.bot.db.data.whitelist
+                        ]:
+                            print(
+                                f"[Anti-Brainrot] Word added but not found in database"
+                            )
                             await shell_command.error(
                                 f"An unknown error occured when adding the word to the database. Please try again. (Added but not found in database)",
-                                title="Failed to Add Word",)
+                                title="Failed to Add Word",
+                            )
                             return
                     else:
-                        if not word in [word['word'] for word in self.bot.db.data.brainrot]:
-                            print(f"[Anti-Brainrot] Word added but not found in database")
+                        if not word in [
+                            word["word"] for word in self.bot.db.data.brainrot
+                        ]:
+                            print(
+                                f"[Anti-Brainrot] Word added but not found in database"
+                            )
                             await shell_command.error(
                                 f"An unknown error occured when adding the word to the database. Please try again. (Added but not found in database)",
-                                title="Failed to Add Word",)
+                                title="Failed to Add Word",
+                            )
                             return
-                    
+
                     print(f"[Anti-Brainrot] Word added to {table}")
                     await shell_command.success(
-                        f"Word added to {table} list: {word}", title=f"{"Whitelist" if table == "whitelist" else "Banned"} Word Added"
+                        f"Word added to {table} list: {word}",
+                        title=f"{'Whitelist' if table == 'whitelist' else 'Banned'} Word Added",
                     )
-                
+
                 elif query.startswith("remove") or query.startswith("rm"):
                     print("[Anti-Brainrot] Removing word from list")
-                    word = ' '.join(query.split(" ")[1:])
-                    if word in [word['word'] for word in self.bot.db.data.brainrot]:
+                    word = " ".join(query.split(" ")[1:])
+                    if word in [word["word"] for word in self.bot.db.data.brainrot]:
                         print("[Anti-Brainrot] Found word in banned list")
                         table = "brainrot"
                         for word in self.bot.db.data.brainrot:
-                            if word['word'] == word:
-                                word_id = word['id']
+                            if word["word"] == word:
+                                word_id = word["id"]
                                 break
-                    elif word in [word['word'] for word in self.bot.db.data.whitelist]:
+                    elif word in [word["word"] for word in self.bot.db.data.whitelist]:
                         print("[Anti-Brainrot] Found word in whitelist")
                         table = "whitelist"
                         for word in self.bot.db.data.whitelist:
-                            if word['word'] == word:
-                                word_id = word['id']
-                                break                    
+                            if word["word"] == word:
+                                word_id = word["id"]
+                                break
                     else:
                         print("[Anti-Brainrot] Word not found in database")
                         await shell_command.error(
                             "Word not found in database", title="Word Not Found"
                         )
                         return
-                    print(f"[Anti-Brainrot] Removing word: {word} from {table} (ID: {word_id})")
-                    
+                    print(
+                        f"[Anti-Brainrot] Removing word: {word} from {table} (ID: {word_id})"
+                    )
+
                     try:
                         conn = await self.bot.db.auto_connect()
                         await self.bot.db.delete_entry(
@@ -1810,9 +1975,11 @@ Admins: {self.admins}"""
                             {"id": word_id},
                             conn=conn,
                         )
-                        print(f"[Anti-Brainrot] Word removed from {table}, updating database...")
+                        print(
+                            f"[Anti-Brainrot] Word removed from {table}, updating database..."
+                        )
                         await self.bot.db.update_all_auto()
-                    
+
                     except Exception as e:
                         try:
                             conn.close()
@@ -1824,29 +1991,40 @@ Admins: {self.admins}"""
                             title="Failed to Remove Word",
                         )
                         return
-                    
+
                     if table == "whitelist":
-                        if word in [word['word'] for word in self.bot.db.data.whitelist]:
-                            print(f"[Anti-Brainrot] Word removed but still found in database")
+                        if word in [
+                            word["word"] for word in self.bot.db.data.whitelist
+                        ]:
+                            print(
+                                f"[Anti-Brainrot] Word removed but still found in database"
+                            )
                             await shell_command.error(
                                 f"An unknown error occured when removing the word from the database. Please try again. (Removed but still found in database)",
-                                title="Failed to Remove Word",)
+                                title="Failed to Remove Word",
+                            )
                             return
                     else:
-                        if word in [word['word'] for word in self.bot.db.data.brainrot]:
-                            print(f"[Anti-Brainrot] Word removed but still found in database")
+                        if word in [word["word"] for word in self.bot.db.data.brainrot]:
+                            print(
+                                f"[Anti-Brainrot] Word removed but still found in database"
+                            )
                             await shell_command.error(
                                 f"An unknown error occured when removing the word from the database. Please try again. (Removed but still found in database)",
-                                title="Failed to Remove Word",)
+                                title="Failed to Remove Word",
+                            )
                             return
-                        
+
                     print(f"[Anti-Brainrot] Word removed from {table}")
                     await shell_command.success(
-                        f"Word removed from {table} list: {word}", title=f"{"Whitelist" if table == "whitelist" else "Banned"} Word Removed"
+                        f"Word removed from {table} list: {word}",
+                        title=f"{'Whitelist' if table == 'whitelist' else 'Banned'} Word Removed",
                     )
-                    
+
                 elif query.startswith("on") or query.startswith("off"):
-                    print(f"[Anti-Brainrot] {"Enabling" if query.startswith("on") else "Disabling"} brainrot filter")
+                    print(
+                        f"[Anti-Brainrot] {'Enabling' if query.startswith('on') else 'Disabling'} brainrot filter"
+                    )
                     try:
                         conn = await self.bot.db.auto_connect()
                         if self.bot.db.data.config_has("enable_brainrot"):
@@ -1860,10 +2038,15 @@ Admins: {self.admins}"""
                             print("[Anti-Brainrot] Config entry not found, adding...")
                             await self.bot.db.add_entry(
                                 "config",
-                                {"name": "enable_brainrot", "value": 1 if query.startswith("on") else 0},
+                                {
+                                    "name": "enable_brainrot",
+                                    "value": 1 if query.startswith("on") else 0,
+                                },
                                 conn=conn,
                             )
-                        print("[Anti-Brainrot] Brainrot filter enabled, updating database...")
+                        print(
+                            "[Anti-Brainrot] Brainrot filter enabled, updating database..."
+                        )
                         await self.bot.db.update_all_auto()
                     except Exception as e:
                         print(f"[Anti-Brainrot] Error enabling brainrot filter: {e}")
@@ -1875,14 +2058,15 @@ Admins: {self.admins}"""
                         return
                     print(f"[Anti-Brainrot] Brainrot filter enabled")
                     await shell_command.success(
-                        f"Brainrot filter {'enabled' if query.startswith('on') else 'disabled'}", title="Brainrot Filter"
+                        f"Brainrot filter {'enabled' if query.startswith('on') else 'disabled'}",
+                        title="Brainrot Filter",
                     )
                     return
-                
+
                 # Defualt case: List all banned words
-                banned = [word['word'] for word in self.bot.db.data.brainrot]
-                whitelist = [word['word'] for word in self.bot.db.data.whitelist]
-                
+                banned = [word["word"] for word in self.bot.db.data.brainrot]
+                whitelist = [word["word"] for word in self.bot.db.data.whitelist]
+
                 fields = [
                     {
                         "name": "Banned Words",
@@ -1893,11 +2077,11 @@ Admins: {self.admins}"""
                         "name": "Whitelist",
                         "value": "- " + "\n- ".join(map(str, whitelist)),
                         "inline": False,
-                    }
+                    },
                 ]
-                
+
                 await shell_command.info(
                     "Here are all the banned words in the database. (Use `splat brainrot help` for more commands)",
                     title="Anti-Brainrot List",
-                    fields=fields
+                    fields=fields,
                 )
