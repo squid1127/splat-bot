@@ -22,7 +22,10 @@ class DownReport(commands.Bot):
         print("[Down Report] Done")
 
     async def on_ready(self):
+        
         await self.log.log_saved(self)
+        print("[Down Report] Done, shutting down")
+        await asyncio.sleep(1)
         await self.close()
 
     class Logger:

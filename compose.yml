@@ -22,6 +22,33 @@ services:
       - .env
     tty: true
     stdin_open: true
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      retries: 10
+      timeout: 20s
+
+  # nocodb: 
+  #   depends_on: 
+  #     - mysql
+  #   environment: 
+  #     NC_DB: "mysql2://mysql:3306?u=${MYSQL_USER}&p=${MYSQL_PASSWORD}&db=${MYSQL_DATABASE}"
+  #   healthcheck: 
+  #     retries: 10
+  #     test: 
+  #       - CMD
+  #       - mysqladmin
+  #       - ping
+  #       - "-h"
+  #       - localhost
+  #     timeout: 20s
+  #   image: "nocodb/nocodb:latest"
+  #   ports: 
+  #     - "8080:8080"
+  #   restart: always
+  #   volumes: 
+  #     - "/workspaces/splat-bot/dev_db/nocodb:/usr/app/data"
+  #   networks:
+  #     - bot-net
  
 networks:
   bot-net:
