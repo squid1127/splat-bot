@@ -15,7 +15,7 @@ services:
     networks:
       - bot-net
     volumes:
-      - /workspaces/splat-bot/dev_db:/var/lib/mysql
+      - /dev_db:/var/lib/mysql
     ports:
       - 3306:3306
     env_file:
