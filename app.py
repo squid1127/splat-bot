@@ -12,13 +12,13 @@ print("[Runner] Loading environment variables")
 load_dotenv()
 token = os.getenv("BOT_TOKEN")
 db_creds = [
-    {
-        "name": "Dev Database (Docker)",
-        "host": "mysql",
-        "user": os.getenv("MYSQL_USER"),
-        "password": os.getenv("MYSQL_PASSWORD"),
-        "db": os.getenv("MYSQL_DATABASE"),
-    },
+    # {
+    #     "name": "Dev Database (Docker)",
+    #     "host": "mysql",
+    #     "user": os.getenv("MYSQL_USER"),
+    #     "password": os.getenv("MYSQL_PASSWORD"),
+    #     "db": os.getenv("MYSQL_DATABASE"),
+    # },
     {
         "name": "Dev Database (localhost)",
         "host": "localhost",
