@@ -55,4 +55,4 @@ try:
             print(e)
 except KeyboardInterrupt:
     print("\nBye bye!")
-        
+    mycursor.close()
