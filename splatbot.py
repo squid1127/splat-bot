@@ -69,12 +69,18 @@ class SplatBot(commands.Bot):
                 "cog": "GuildsCheck",
                 "description": "Manage channels and channel-config",
             },
+            "cmd-cfg": {
+                "cog": "SplatCommands",
+                "description": "Manage app command settings",
+            },
         }
 
         self.token = token
         self.db = self.Database(creds=db_creds)
         self.perms = self.Permissions(self)
         self.shell = self.Shell(self, shell)
+
+        self.docker = self.is_docker()
 
         # Add cogs
         asyncio.run(self.addCogs())
@@ -125,6 +131,15 @@ class SplatBot(commands.Bot):
         print("[Core] Bot is ready!")
         print(f"[Core] Logged in as {self.user}")
 
+    # Check for docker
+    def is_docker(self) -> bool:
+        """Check if the bot is running in a docker container"""
+        try:
+            with open("/proc/1/cgroup", "rt") as ifh:
+                return "docker" in ifh.read()
+        except:
+            return False
+
     # * Classes & Cogs
     # Discord shell
     class Shell:
@@ -142,7 +157,7 @@ class SplatBot(commands.Bot):
                 print("[Shell] Starting logging...")
                 await asyncio.sleep(1)
                 await self.log(
-                    f"Bot has successfully started. **Database**: {'working' if self.bot.db.working else 'not working'}",
+                    f"Bot has successfully started. **Database**: {'working' if self.bot.db.working else 'not working'} **Docker**: {'yes' if self.bot.docker else 'no'}",
                     title="Bot Started",
                     msg_type="success",
                     cog="Shell",
@@ -183,10 +198,16 @@ class SplatBot(commands.Bot):
             title: str = None,
             msg_type: str = "info",
             cog: str = None,
+            plain_text: str = None,
         ):
             embed = await self.create_embed(message, title, msg_type, cog)
             await self.channel.send(
-                ("@everyone" if msg_type == "fatal_error" else ""), embed=embed
+                (
+                    plain_text
+                    if plain_text
+                    else ("@everyone" if msg_type == "fatal_error" else "")
+                ),
+                embed=embed,
             )
 
         class ShellCommand:
@@ -289,7 +310,7 @@ class SplatBot(commands.Bot):
                     embed.set_footer(text=footer)
 
                 await self.channel.send(embed=embed)
-                
+
             async def raw(self, *args, **kwargs):
                 await self.channel.send(*args, **kwargs)
 
@@ -318,18 +339,20 @@ class SplatBot(commands.Bot):
                 return
             if message.channel.id != self.bot.shell.channel_id:
                 return
-            
+
             await self.process_shell(message)
-            
+
         # Shell command listener but message edited
         @commands.Cog.listener()
-        async def on_message_edit(self, before: discord.Message, after: discord.Message):
+        async def on_message_edit(
+            self, before: discord.Message, after: discord.Message
+        ):
             if before.author.bot:
                 return
             if before.channel.id != self.bot.shell.channel_id:
                 return
             await self.process_shell(after)
-            
+
         # Process shell commands
         async def process_shell(self, message: discord.Message):
             if self.shell.interactive_mode:
@@ -362,6 +385,15 @@ class SplatBot(commands.Bot):
                         msg_type="error",
                         cog="ShellManager",
                     )
+                return
+
+            if message.content.lower() == "splat":
+                await self.shell.log(
+                    "Please provide a command to run. Use `splat help` for a list of commands.",
+                    title="No Command Provided",
+                    msg_type="error",
+                    cog="ShellManager",
+                )
                 return
 
             if not message.content.startswith("splat "):
@@ -643,7 +675,7 @@ class SplatBot(commands.Bot):
                 CREATE TABLE
                 brainrot (
                     id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
-                    word VARCHAR(255) NOT NULL
+                    word VARCHAR(255) NOT NULL UNIQUE
                 );
                 """
                 try:
@@ -662,7 +694,7 @@ class SplatBot(commands.Bot):
                 CREATE TABLE
                 whitelist (
                     id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
-                    word VARCHAR(255) NOT NULL
+                    word VARCHAR(255) NOT NULL UNIQUE
                 );
                 """
                 try:
@@ -752,6 +784,7 @@ class SplatBot(commands.Bot):
             target_values = tuple(target.values())
             query = f"UPDATE {table} SET {columns} = {placeholders} WHERE {target_columns} = {target_placeholders}"
             await self.execute_query(query, conn, values + target_values)
+            await conn.commit()
             print(f"[Database] Updated entry in {table}: {target} -> {data}")
 
         async def delete_entry(self, table: str, data: dict, conn: aiomysql.Connection):
@@ -761,6 +794,7 @@ class SplatBot(commands.Bot):
             values = tuple(data.values())
             query = f"DELETE FROM {table} WHERE {columns} = {placeholders}"
             await self.execute_query(query, conn, values)
+            await conn.commit()
             print(f"[Database] Deleted entry from {table}: {data}")
 
         # Execute generic SQL query
@@ -769,7 +803,7 @@ class SplatBot(commands.Bot):
             query: str,
             conn: aiomysql.Connection,
             values: tuple = None,
-            pretty_table: bool = True,
+            pretty_table: bool = False,
         ):
             """Execute a generic SQL query, such as `SELECT * FROM table`"""
             print(f"[Database] Executing query: {query} ({values})")
@@ -840,6 +874,33 @@ class SplatBot(commands.Bot):
             await self.update_all_conn(conn)
             conn.close()
 
+        # Config management
+        async def config_get(self, name: str):
+            """Get a config entry value"""
+            for entry in self.data.config:
+                if entry["name"] == name:
+                    return entry["value"]
+            return None
+
+        async def config_set(
+            self, name: str, value: str, conn: aiomysql.Connection = None
+        ):
+            """Set a config entry value"""
+            if conn is None:
+                conn = await self.auto_connect()
+            for entry in self.data.config:
+                if entry["name"] == name:
+                    await self.update_entry(
+                        "config", {"name": name}, {"value": value}, conn
+                    )
+                    if conn is None:
+                        conn.close()
+                    return True
+            await self.add_entry("config", {"name": name, "value": value}, conn)
+            if conn is None:
+                conn.close()
+            return True
+
         class DbData:
             """Database data object, stores all data from the database"""
 
@@ -851,7 +912,6 @@ class SplatBot(commands.Bot):
                 self.whitelist = []
                 self.admins = []
                 self.config = []
-
                 self.write_count = 0
 
             def __str__(self):
@@ -970,14 +1030,14 @@ Admins: {self.admins}"""
             # Config table functions
 
             def config_has(self, name: str):
-                """Check if a config entry exists"""
+                """Deprecated: Check if a config entry exists"""
                 for entry in self.config:
                     if entry["name"] == name:
                         return True
                 return False
 
             def config_get(self, name: str):
-                """Get a config entry value"""
+                """Deprecated: Get a config entry value"""
                 for entry in self.config:
                     if entry["name"] == name:
                         return entry["value"]
@@ -1013,7 +1073,7 @@ Admins: {self.admins}"""
                 if attempts > 5:
                     print("[Database Manager] Database setup failed!")
                     return 0
-                await asyncio.sleep(1)
+                await asyncio.sleep(15)
             print("[Database Manager] Database setup complete!")
 
             if self.bot.db.data.is_data_empty():
@@ -1069,33 +1129,33 @@ Admins: {self.admins}"""
                 print("[Database Manager] Done pulling data!")
             conn.close()
 
-        # Test command: fetch raw data from a table
-        @app_commands.command(
-            name="fetch-data", description="Fetch raw data from a database table"
-        )
-        async def test_fetch(self, interaction: discord.Interaction, table: str):
-            print(f"[Database Manager] Command: Fetching data from table: {table}")
-            conn = await self.bot.db.auto_connect()
-            if conn is None:
-                await interaction.response.send_message(
-                    "No working database connections"
-                )
-                return
-            try:
-                result = await self.bot.db.read_table(table, conn)
-            except Exception as e:
-                if e.args[0] == 1146:
-                    await interaction.response.send_message(
-                        f"Table `{table}` not found"
-                    )
-                    return
-                await interaction.response.send_message(f"Error fetching data: {e}")
-                return
-            await interaction.response.send_message(
-                f"**Result**: \n```python\n{result}\n```"
-            )
-            conn.close()
-            print(f"[Database Manager] Done fetching data from table: {table}")
+        # # Test command: fetch raw data from a table
+        # @app_commands.command(
+        #     name="fetch-data", description="Fetch raw data from a database table"
+        # )
+        # async def test_fetch(self, interaction: discord.Interaction, table: str):
+        #     print(f"[Database Manager] Command: Fetching data from table: {table}")
+        #     conn = await self.bot.db.auto_connect()
+        #     if conn is None:
+        #         await interaction.response.send_message(
+        #             "No working database connections"
+        #         )
+        #         return
+        #     try:
+        #         result = await self.bot.db.read_table(table, conn)
+        #     except Exception as e:
+        #         if e.args[0] == 1146:
+        #             await interaction.response.send_message(
+        #                 f"Table `{table}` not found"
+        #             )
+        #             return
+        #         await interaction.response.send_message(f"Error fetching data: {e}")
+        #         return
+        #     await interaction.response.send_message(
+        #         f"**Result**: \n```python\n{result}\n```"
+        #     )
+        #     conn.close()
+        #     print(f"[Database Manager] Done fetching data from table: {table}")
 
         async def shell_callback(
             self, command: str, query: str, shell_command: "SplatBot.Shell.ShellCommand"
@@ -1343,7 +1403,15 @@ Admins: {self.admins}"""
             elif command == "db_shell_callback":
                 try:
                     conn = await self.bot.db.auto_connect()
-                    result = await self.bot.db.execute_query(query, conn)
+                    result = await self.bot.db.execute_query(
+                        query, conn, pretty_table=True
+                    )
+                    try:
+                        await conn.commit()
+                    except:
+                        print("[Database Manager] No commit needed (Commit failed)")
+                    else:
+                        print("[Database Manager] Commit successful")
                 except Exception as e:
                     try:
                         conn.close()
@@ -1355,17 +1423,20 @@ Admins: {self.admins}"""
                         1146: "Table Not Found",
                         1045: "Access Denied",
                     }
-                    
+
                     error = possible_errors.get(e.args[0])
                     if error:
                         message = f'{error} ({e.args[0]}): "{e.args[1]}"'
                     else:
                         message = f'Error {e.args[0]}: "{e.args[1]}"'
-                    await shell_command.raw("```python\n" + message + "\n```\nTip: To exit the shell, type `~exit`")
+                    await shell_command.raw(
+                        "```python\n"
+                        + message
+                        + "\n```\nTip: To exit the shell, type `~exit`"
+                    )
                     return
                 else:
                     print("[Database Manager] Query executed!")
-                    conn.close()
                     # is result a list?
                     if isinstance(result, list):
                         print("[Database Manager] Result is a list")
@@ -1374,8 +1445,12 @@ Admins: {self.admins}"""
                     if isinstance(result, tuple):
                         print("[Database Manager] Result is a tuple")
                         print(result)
-                        result = f"Result: {result[0]}\nDescription: {result[1]}"
+                        if result == ([], None):
+                            result = "Query executed successfully"
+                        else:
+                            result = f"Result: {result[0]}\nDescription: {result[1]}"
                     await shell_command.raw("```\n" + result + "\n```")
+                    conn.close()
                     return
 
     # Bot events (on_ready, on_message, etc.)
@@ -1431,6 +1506,58 @@ Admins: {self.admins}"""
     class SplatCommands(commands.Cog):
         def __init__(self, bot: "SplatBot"):
             self.bot = bot
+            self.commands_info = [
+                {
+                    "name": "ping",
+                    "description": "Check if bot is online",
+                },
+                {
+                    "name": "help-splat",
+                    "description": "Get help with Splat commands",
+                },
+                {
+                    "name": "dev-excuse",
+                    "description": "Get a random developer excuse",
+                },
+                {
+                    "name": "joke",
+                    "description": "Get a random joke",
+                },
+                {
+                    "name": "random-verse",
+                    "description": "Get a random Bible verse",
+                },
+                {
+                    "name": "cat",
+                    "description": "Get a random cat picture",
+                },
+                {
+                    "name": "cat-fact",
+                    "description": "Get a random cat fact",
+                },
+            ]
+            self.help_fields = [
+                {
+                    "name": "Running Commands",
+                    "description": "To run a command, type `/[command]`",
+                },
+                {
+                    "name": "Commands",
+                    "special": "commands",
+                },
+                {
+                    "name": "Splat in your server",
+                    "description": "You can use me in your own server! To do so, click on my profile and select 'Add App!'",
+                },
+            ]
+
+        async def report_error(self, command: str, error: Exception):
+            await self.bot.shell.log(
+                f"[Commands] Error running command: {command} | {error}",
+                title="Application Command Error",
+                cog="SplatCommands",
+                msg_type="error",
+            )
 
         # Sync commands on bot ready
         @commands.Cog.listener()
@@ -1445,17 +1572,234 @@ Admins: {self.admins}"""
         async def ping(self, interaction: discord.Interaction):
             await interaction.response.send_message("Pong!")
 
+        @app_commands.command(
+            name="help-splat", description="Get help with Splat commands"
+        )
+        async def help_splat(self, interaction: discord.Interaction):
+            embed = discord.Embed(
+                title="Splat-Bot Help",
+                description="Splat-bot (The 2nd), the general purpose bot featuring random commands, extensive server-management, brainrot enforcement, and so much more! Built in Python.",
+                color=discord.Color.blurple(),
+            )
+            commands_field = ""
+            for command in self.commands_info:
+                commands_field += f"`{command['name']}`: {command['description']}\n"
+            for field in self.help_fields:
+                if field.get("special") == "commands":
+                    embed.add_field(
+                        name=field["name"], value=commands_field, inline=False
+                    )
+                else:
+                    embed.add_field(
+                        name=field["name"], value=field["description"], inline=False
+                    )
+            embed.set_footer(text="Made with love by CubbScratchStudios ❤️")
+            await interaction.response.send_message(embed=embed)
+
+        # Random api command: Get dev excuses
+        @app_commands.command(
+            name="dev-excuse", description="Get a random developer excuse"
+        )
+        async def dev_excuse(self, interaction: discord.Interaction):
+            api = "https://api.devexcus.es/"
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(api) as response:
+                        data = await response.json()
+                        excuse = data["text"]
+
+                embed = discord.Embed(
+                    title="Developer Excuse",
+                    description=excuse,
+                    color=discord.Color.blurple(),
+                )
+                embed.set_footer(text="Powered by devexcus.es")
+                await interaction.response.send_message(embed=embed)
+                return
+            except Exception as e:
+                embed = discord.Embed(
+                    title="Developer Excuse: Error",
+                    description=f"Error fetching excuse: {e}",
+                    color=discord.Color.red(),
+                )
+                await interaction.response.send_message(embed=embed)
+                await self.report_error("dev-excuse", e)
+                return
+
+        # Random api command: Get random joke
+        @app_commands.command(name="joke", description="Get a random joke")
+        async def joke(self, interaction: discord.Interaction):
+            api = "https://official-joke-api.appspot.com/random_joke"
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(api) as response:
+                        data = await response.json()
+                        setup = data["setup"]
+                        punchline = data["punchline"]
+
+                embed = discord.Embed(
+                    title="Random Joke",
+                    description=setup,
+                    color=discord.Color.blurple(),
+                )
+                embed.add_field(name="Punchline", value="||" + punchline + "||")
+                embed.set_footer(text="Powered by official-joke-api.appspot.com")
+                await interaction.response.send_message(embed=embed)
+                return
+            except Exception as e:
+                embed = discord.Embed(
+                    title="Random Joke: Error",
+                    description=f"Error fetching joke: {e}",
+                    color=discord.Color.red(),
+                )
+                await interaction.response.send_message(embed=embed)
+                await self.report_error("joke", e)
+                return
+
+        # Random api command: Bible verse :)
+        @app_commands.command(
+            name="random-verse", description="Get a random Bible verse"
+        )
+        async def random_verse(self, interaction: discord.Interaction):
+            api = "https://beta.ourmanna.com/api/v1/get/?format=json"
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(api) as response:
+                        data = await response.json()
+                        verse = data["verse"]["details"]["text"]
+                        reference = data["verse"]["details"]["reference"]
+
+                embed = discord.Embed(
+                    title="Random Bible Verse",
+                    description=verse,
+                    color=discord.Color.blurple(),
+                )
+                embed.set_footer(text=f"{reference} | Powered by ourmanna.com")
+                await interaction.response.send_message(embed=embed)
+                return
+            except Exception as e:
+                embed = discord.Embed(
+                    title="Random Bible Verse: Error",
+                    description=f"Error fetching verse: {e}",
+                    color=discord.Color.red(),
+                )
+                await interaction.response.send_message(embed=embed)
+                await self.report_error("random-verse", e)
+                return
+
+        # Random api command: Get random cat fact
+        @app_commands.command(name="cat-fact", description="Get a random cat fact")
+        async def cat_fact(self, interaction: discord.Interaction):
+            api = "https://catfact.ninja/fact"
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(api) as response:
+                        data = await response.json()
+                        fact = data["fact"]
+
+                embed = discord.Embed(
+                    title="Random Cat Fact",
+                    description=fact,
+                    color=discord.Color.blurple(),
+                )
+                embed.set_footer(text="Powered by catfact.ninja")
+                await interaction.response.send_message(embed=embed)
+                return
+            except Exception as e:
+                embed = discord.Embed(
+                    title="Random Cat Fact: Error",
+                    description=f"Error fetching fact: {e}",
+                    color=discord.Color.red(),
+                )
+                await interaction.response.send_message(embed=embed)
+                await self.report_error("cat-fact", e)
+                return
+        
+
+        # Random api command: Get cat image :)
+        @app_commands.command(name="cat", description="Get a random cat image")
+        async def cat(self, interaction: discord.Interaction):
+            api = "https://api.thecatapi.com/v1/images/search"
+            api_key = await self.bot.db.config_get("cat_api_key")
+            if api_key:
+                headers = {"x-api-key": api_key}
+            else:
+                headers = None
+
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(api, headers=headers) as response:
+                        data = await response.json()
+                        image = data[0]["url"]
+
+                embed = discord.Embed(
+                    title="Meow :3",
+                    description="Here's a cat!",
+                    color=0x9d948d
+                )
+                embed.set_image(url=image)
+                embed.set_footer(text="Powered by thecatapi.com")
+                await interaction.response.send_message(embed=embed)
+                return
+            except Exception as e:
+                embed = discord.Embed(
+                    title="Random Cat Image: Error",
+                    description=f"Error fetching image: {e}",
+                    color=discord.Color.red(),
+                )
+                await interaction.response.send_message(embed=embed)
+                await self.report_error("cat", e)
+                return
+
+        # Shell commands
+        async def shell_callback(
+            self, command: str, query: str, shell_command: "SplatBot.Shell.ShellCommand"
+        ):
+            print(f"[Commands] Recieved shell command: {command} | Query: {query}")
+            if command == "cmd-cfg":
+                if query.startswith("cat-api-key"):
+                    print("[Commands] Cat API key command received")
+                    key = query.split("cat-api-key ")[1]
+                    try:
+                        await self.bot.db.config_set("cat_api_key", key)
+                        await self.bot.db.update_all_auto()
+                        await shell_command.success(
+                            "Cat API key updated successfully!",
+                            title="Cat API Key Updated",
+                        )
+                    except Exception as e:
+                        print(f"[Commands] Error updating cat api key: {e}")
+                        await shell_command.error(
+                            f"An error was encountered when updating the cat API key: {e}",
+                            title="Cat API Key Update Error",
+                        )
+                        return
+                
+                # If no command specified, list config
+                print("[Commands] Config list command received")
+                config = f"- Cat API Key (cat-api-key): {await self.bot.db.config_get('cat_api_key')}"
+                fields = [
+                    {
+                        "name": "Config",
+                        "value": config,
+                        "inline": False,
+                    }
+                ]
+                await shell_command.info(
+                    "Below is a list of all config entries. To update a config entry, use `splat cmd-cfg [entry] [value]`",
+                    title="Config List",
+                    fields=fields,
+                )        
+
     # Handle DMs using threads
     class DMHandler(commands.Cog):
         def __init__(self, bot: "SplatBot"):
             self.bot = bot
+            self.dm_channel_id = self.bot.shell.channel_id
 
         # Handle incoming DMs
         async def handle_dm_in(self, message: discord.Message):
-            dm_channel_id = None
-            self.dm_channel = self.bot.get_channel(
-                dm_channel_id
-            )  # TODO get from database instead
+            self.dm_channel = self.bot.get_channel(self.dm_channel_id)
             print(f"[DMs] Incoming DM from {message.author.name}: {message.content}")
 
             # Get all threads and check if there is a thread titled with the user's ID
@@ -1468,10 +1812,29 @@ Admins: {self.admins}"""
 
             # If there is no thread, create one
             if user_thread is None:
-                print(f"[DMs] Creating thread for {message.author.name}")
-                user_thread = await self.dm_channel.create_thread(
-                    name=f"{message.author.name}&{message.author.id}"
+
+                print(
+                    f"[DMs] No thread found for {message.author.name}, creating one..."
                 )
+
+                embed = discord.Embed(
+                    title=f"DM from {message.author.name}",
+                    description=f"Creating thread for DM with {message.author.name}",
+                    color=discord.Color.blurple(),
+                )
+                embed.set_footer(text="Incoming DM")
+                embed.set_author(name="DMHandler")
+                create_message = await self.dm_channel.send(embed=embed)
+
+                print(f"[DMs] Creating thread for {message.author.name}")
+                try:
+                    user_thread = await self.dm_channel.create_thread(
+                        name=f"{message.author.name}&{message.author.id}",
+                        message=create_message,
+                    )
+                except Exception as e:
+                    print(f"[DMs] Error creating thread: {e}")
+                    return
 
             if message.reference:
                 ref_message = await message.channel.fetch_message(
@@ -1485,6 +1848,7 @@ Admins: {self.admins}"""
                 reply_embed.set_author(
                     name=ref_message.author.name, icon_url=ref_message.author.avatar.url
                 )
+                reply_embed.set_footer(text="Reply")
                 await user_thread.send(embed=reply_embed)
 
             msg = f"||%%id&{message.id}%%||\n{message.content}"
@@ -1496,14 +1860,17 @@ Admins: {self.admins}"""
                 ],
             )
 
-            await self.dm_channel.send(
-                f"<@&1286884945851056191> {user_thread.mention} from {message.author.name}"
+            await self.bot.shell.log(
+                f"[DMs] Incoming DM from {message.author.name}, view in {user_thread.mention}",
+                title="Incoming DM",
+                cog="DMHandler",
+                msg_type="info",
+                plain_text="<@&1286884945851056191>",
             )
 
         # Handle outgoing to DMs
         async def handle_dm_out(self, message: discord.Message):
-            dm_channel_id = None
-            dm_channel = self.bot.get_channel(dm_channel_id)
+            dm_channel = self.bot.get_channel(self.dm_channel_id)
             user_id = int(message.channel.name.split("&")[1])
             user = self.bot.get_user(user_id)
 
@@ -1550,6 +1917,8 @@ Admins: {self.admins}"""
                     "Warning: Reply detected but no reference found. Sending as normal."
                 )
 
+            print("[DMs] Sending message to user")
+            msg = message.content
             await user.send(
                 msg,
                 files=[
@@ -1573,7 +1942,7 @@ Admins: {self.admins}"""
             # Outgoing -> Forward to DM
             elif (
                 isinstance(message.channel, discord.Thread)
-                and message.channel.parent_id == None
+                and message.channel.parent_id == self.dm_channel_id
             ):
                 await self.handle_dm_out(message)
                 return
@@ -1801,8 +2170,13 @@ Admins: {self.admins}"""
                 print("[Anti-Brainrot] Banned words not set up correctly, ignoring...")
                 return
 
-            if not bool(self.bot.db.data.config_get("enable_brainrot")):
+            if self.bot.db.data.config_get("enable_brainrot") == "0":
+                # print(f"[Anti-Brainrot] (Debug) {self.bot.db.data.config_get('enable_brainrot')}")
                 print("[Anti-Brainrot] Brainrot filter disabled globally, ignoring...")
+                return
+
+            # Ignore bot messages
+            if message.author.bot:
                 return
 
             # Scan message for banned words
@@ -1841,7 +2215,7 @@ Admins: {self.admins}"""
                 cog="Anti-Brainrot",
             )
 
-        async def is_banned(self, phrase: str) -> int:
+        async def is_banned(self, phrase: str) -> list | int:
             # Scan using fuzzy matching
             fuzzy_threshold = 80
             fuzzy_method = fuzz.partial_ratio
@@ -1869,6 +2243,21 @@ Admins: {self.admins}"""
                 f"[Anti-Brainrot] Banned phrase detected: {phrase} (Matched: {found_banned})"
             )
             return found_banned
+
+        async def is_whitelisted(self, phrase: str) -> list:
+            # Scan using fuzzy matching
+
+            found_whitelisted = []
+            min_length = 4
+
+            if len(phrase) < min_length:
+                return []
+
+            for word in self.bot.db.data.whitelist:
+                if word["word"] in phrase:
+                    found_whitelisted.append(word["word"])
+
+            return found_whitelisted
 
         async def shell_callback(
             self, command: str, query: str, shell_command: "SplatBot.Shell.ShellCommand"
@@ -1941,32 +2330,247 @@ Admins: {self.admins}"""
                         title=f"{'Whitelist' if table == 'whitelist' else 'Banned'} Word Added",
                     )
 
-                elif query.startswith("remove") or query.startswith("rm"):
-                    print("[Anti-Brainrot] Removing word from list")
-                    word = " ".join(query.split(" ")[1:])
-                    if word in [word["word"] for word in self.bot.db.data.brainrot]:
-                        print("[Anti-Brainrot] Found word in banned list")
-                        table = "brainrot"
-                        for word in self.bot.db.data.brainrot:
-                            if word["word"] == word:
-                                word_id = word["id"]
-                                break
-                    elif word in [word["word"] for word in self.bot.db.data.whitelist]:
-                        print("[Anti-Brainrot] Found word in whitelist")
-                        table = "whitelist"
-                        for word in self.bot.db.data.whitelist:
-                            if word["word"] == word:
-                                word_id = word["id"]
-                                break
-                    else:
-                        print("[Anti-Brainrot] Word not found in database")
+                elif query.startswith("reformat"):
+                    print("[Anti-Brainrot] Reformatting banned words...")
+                    shell_command.raw("Reformatting banned words...")
+                    try:
+                        # Connect to database
+                        shell_command.raw("Connecting to database...")
+                        conn = await self.bot.db.auto_connect()
+
+                        # Pull data
+                        await shell_command.raw(
+                            "Connected to database, pulling data..."
+                        )
+                        await self.bot.db.update_all_conn(conn)
+
+                        # Remove table
+                        await shell_command.raw("Data pulled, removing old data...")
+                        banned_words = self.bot.db.data.brainrot
+                        whitelist_words = self.bot.db.data.whitelist
+                        await self.bot.db.execute_query(
+                            "DROP TABLE if exists brainrot", conn
+                        )
+                        await self.bot.db.execute_query(
+                            "DROP TABLE if exists whitelist", conn
+                        )
+                        await conn.commit()
+
+                        # Create new table by running check_database
+                        await shell_command.raw(
+                            "Old data removed, creating new table..."
+                        )
+                        await self.bot.db.check_database()
+                        await shell_command.raw("Writing data to new table...")
+
+                        # Add data
+                        await shell_command.raw("New table created, adding data...")
+                        for word in banned_words:
+                            try:
+                                await self.bot.db.add_entry("brainrot", word, conn)
+                            except Exception as e:
+                                print(
+                                    f"[Anti-Brainrot] Error adding word to brainrot: {e}"
+                                )
+                                await shell_command.raw(
+                                    f"Error adding word to brainrot: {e}",
+                                )
+                        for word in whitelist_words:
+                            try:
+                                await self.bot.db.add_entry("whitelist", word, conn)
+                            except Exception as e:
+                                print(
+                                    f"[Anti-Brainrot] Error adding word to whitelist: {e}"
+                                )
+                                await shell_command.raw(
+                                    f"Error adding word to whitelist: {e}",
+                                )
+
+                        # Pull data
+                        await shell_command.raw("Data added, updating database...")
+                        await self.bot.db.update_all_conn(conn)
+
+                        # Success message
+                        await shell_command.raw("Banned words reformatted successfully")
+
+                        await conn.commit()
+                        conn.close()
+
+                    except Exception as e:
+                        print(f"[Anti-Brainrot] Error reformating banned words: {e}")
                         await shell_command.error(
-                            "Word not found in database", title="Word Not Found"
+                            f"Error reformating banned words: {e}",
+                            title="Failed to Reformat Words",
                         )
                         return
-                    print(
-                        f"[Anti-Brainrot] Removing word: {word} from {table} (ID: {word_id})"
+                    print("[Anti-Brainrot] Banned words reformatted!")
+                    await shell_command.success(
+                        "Banned words reformatted successfully",
+                        title="Words Reformatted",
                     )
+
+                # Check if a phrase is banned and suggest fixes
+                elif query.startswith("check"):
+                    query = query.split("check ")[1]
+
+                    print(f"[Anti-Brainrot] Checking where phrase is banned: {query}")
+
+                    found = await self.is_banned(query)
+
+                    if found == 0:
+                        is_whitelisted = await self.is_whitelisted(query)
+
+                        if len(is_whitelisted) > 0:
+                            await shell_command.info(
+                                f"Phrase is whitelisted. Matched words: {is_whitelisted}",
+                                title="Found Whitelisted Phrase",
+                            )
+                            print(
+                                f"[Anti-Brainrot] Phrase is whitelisted. Matched words: {is_whitelisted}"
+                            )
+
+                            # Scan words
+                            found_words = []
+                            index = 0
+
+                            print(
+                                f"[Anti-Brainrot] Checking for word: {word} in {query}"
+                            )
+
+                            while index < len(query.split(" ")) + 1:
+                                two_words = query.split(" ")[index : index + 2]
+                                print(
+                                    f"[Anti-Brainrot] Checking for words: {', '.join(two_words)} {index}-{index+2}"
+                                )
+
+                                two_words_found = await self.is_whitelisted(
+                                    " ".join(two_words)
+                                )
+
+                                if len(two_words_found) > 0:
+                                    found_words.append(
+                                        f"Found word {word} in '{' '.join(two_words)}'"
+                                    )
+
+                                index += 1
+
+                            if len(found_words) > 0:
+                                found_words_md = "- " + "\n- ".join(found_words)
+                                await shell_command.info(
+                                    f"Found words: \n{found_words_md}",
+                                    title="Found Words",
+                                )
+                            else:
+                                await shell_command.info(
+                                    f"Phrase is not banned or whitelisted",
+                                    title="Phrase Not Found",
+                                )
+
+                            return
+                        else:
+                            await shell_command.info(
+                                f"Phrase is not banned or whitelisted",
+                                title="Phrase Not Found",
+                            )
+                            print(
+                                f"[Anti-Brainrot] Phrase is not banned or whitelisted"
+                            )
+                            return
+
+                    await shell_command.info(
+                        f"Phrase is banned. Matched words: {found}",
+                        title="Found Banned Phrase",
+                    )
+
+                    print(f"[Anti-Brainrot] Phrase is banned. Matched words: {found}")
+
+                    # Scan words
+                    found_words = []
+                    index = 0
+
+                    print(f"[Anti-Brainrot] Scanning by word: {query}")
+
+                    while index < len(query.split(" ")) + 1:
+                        two_words = query.split(" ")[index : index + 2]
+                        print(
+                            f"[Anti-Brainrot] Checking for words: {', '.join(two_words)} {index}-{index+2}"
+                        )
+
+                        two_words_found = await self.is_banned(" ".join(two_words))
+
+                        if two_words_found != 0:
+                            for word in two_words_found:
+                                found_words.append(
+                                    f"Found word {word[0]} ({word[1]}%) in '{' '.join(two_words)}'"
+                                )
+
+                        index += 1
+
+                    if len(found_words) > 0:
+                        found_words_md = "- " + "\n- ".join(found_words)
+                        await shell_command.info(
+                            f"Found words: \n{found_words_md}",
+                            title="Found Words",
+                        )
+                    return
+
+                elif query.startswith("remove") or query.startswith("rm"):
+                    print("[Anti-Brainrot] Removing word from list")
+                    query_word = " ".join(query.split(" ")[1:])
+                    print(f"[Anti-Brainrot] Query word: {query_word}")
+                    try:
+                        if query_word in [
+                            word["word"] for word in self.bot.db.data.brainrot
+                        ]:
+                            print("[Anti-Brainrot] Found word in banned list")
+                            table = "brainrot"
+                            for word in self.bot.db.data.brainrot:
+                                if word["word"] == query_word:
+                                    word_id = word["id"]
+                                    break
+                            else:
+                                print(
+                                    "[Anti-Brainrot] Word found in banned list, but not in database"
+                                )
+                                await shell_command.error(
+                                    "An unexpected error occured when removing the word from the database. Please try again. (Word found in banned list, but not in database)",
+                                    title="Failed to Remove Word",
+                                )
+                                return
+                        elif query_word in [
+                            word["word"] for word in self.bot.db.data.whitelist
+                        ]:
+                            print("[Anti-Brainrot] Found word in whitelist")
+                            table = "whitelist"
+                            for word in self.bot.db.data.whitelist:
+                                if word["word"] == query_word:
+                                    word_id = word["id"]
+                                    break
+                            else:
+                                print(
+                                    "[Anti-Brainrot] Word found in whitelist, but not in database"
+                                )
+                                await shell_command.error(
+                                    "An unexpected error occured when removing the word from the database. Please try again. (Word found in whitelist, but not in database)",
+                                    title="Failed to Remove Word",
+                                )
+                                return
+                        else:
+                            print("[Anti-Brainrot] Word not found in database")
+                            await shell_command.error(
+                                "Word not found in database", title="Word Not Found"
+                            )
+                            return
+                        print(
+                            f"[Anti-Brainrot] Removing word: {query_word} from {table} (ID: {word_id})"
+                        )
+                    except Exception as e:
+                        print(f"[Anti-Brainrot] Error removing word from {table}: {e}")
+                        await shell_command.error(
+                            f"Error removing word from {table}: {e}",
+                            title="Failed to Remove Word",
+                        )
+                        return
 
                     try:
                         conn = await self.bot.db.auto_connect()
@@ -2060,6 +2664,21 @@ Admins: {self.admins}"""
                     await shell_command.success(
                         f"Brainrot filter {'enabled' if query.startswith('on') else 'disabled'}",
                         title="Brainrot Filter",
+                    )
+                    return
+
+                # Help command
+                if query == "help":
+                    await shell_command.info(
+                        "The brainrot filter is a system that detects and punishes users who use banned words. The filter can be enabled or disabled globally. Use the commands below to manage the filter.",
+                        title="Anti-Brainrot Help",
+                        fields=[
+                            {
+                                "name": "Commands",
+                                "value": "- `ban <word>`: Ban a word\n- `whitelist <word>`: Whitelist a word\n- `reformat`: Reformat the banned words list\n- `check <phrase>`: Check if a phrase is banned\n- `remove <word>`: Remove a word from the list\n- `on`: Enable the brainrot filter\n- `off`: Disable the brainrot filter",
+                                "inline": False,
+                            },
+                        ],
                     )
                     return
 
