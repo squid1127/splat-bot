@@ -20,20 +20,26 @@ db_creds = [
     #     "db": os.getenv("MYSQL_DATABASE"),
     # },
     {
-        "name": "Dev Database (localhost)",
+        "name": "Local Database (localhost)",
         "host": "localhost",
         "user": os.getenv("MYSQL_USER"),
         "password": os.getenv("MYSQL_PASSWORD"),
         "db": os.getenv("MYSQL_DATABASE"),
     },
     {
-        "name": "Dev Database (127.0.0.1)",
+        "name": "Local  Database (127.0.0.1)",
         "host": "127.0.0.1",
         "user": os.getenv("MYSQL_USER"),
         "password": os.getenv("MYSQL_PASSWORD"),
         "db": os.getenv("MYSQL_DATABASE"),
     },
-]
+    {
+        "name": "Custom Database (env)",
+        "host": os.getenv("MYSQL_HOST"),
+        "user": os.getenv("MYSQL_USER"),
+        "password": os.getenv("MYSQL_PASSWORD"),
+        "db": os.getenv("MYSQL_DATABASE"),
+    },]
 channel = int(os.getenv("BOT_SHELL"))
 
 splat = SplatBot(token=token, db_creds=db_creds, shell=channel)
