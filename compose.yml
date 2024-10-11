@@ -1,55 +1,17 @@
-name: test_db
+name: splat-bot
 services:
-  # splat-bot-2:
-  #   image: squid1127/splat-bot-2:latest
-  #   container_name: splat-bot-2
-  #   restart: unless-stopped
-  #   hostname: bot
-  #   networks:
-  #     - bot-net
-  mysql:
-    image: mysql:latest
-    container_name: mysql
-    hostname: mysql
+  splat-bot-2:
+    image: ghcr.io/squid1127/splat-bot:main
+    container_name: splat-bot-2
     restart: unless-stopped
+    hostname: splat-bot
     networks:
       - bot-net
-    volumes:
-      - ./dev_db:/var/lib/mysql
-    ports:
-      - 3306:3306
     env_file:
       - .env
     tty: true
     stdin_open: true
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
-      retries: 10
-      timeout: 20s
-
-  # nocodb: 
-  #   depends_on: 
-  #     - mysql
-  #   environment: 
-  #     NC_DB: "mysql2://mysql:3306?u=${MYSQL_USER}&p=${MYSQL_PASSWORD}&db=${MYSQL_DATABASE}"
-  #   healthcheck: 
-  #     retries: 10
-  #     test: 
-  #       - CMD
-  #       - mysqladmin
-  #       - ping
-  #       - "-h"
-  #       - localhost
-  #     timeout: 20s
-  #   image: "nocodb/nocodb:latest"
-  #   ports: 
-  #     - "8080:8080"
-  #   restart: always
-  #   volumes: 
-  #     - "/workspaces/splat-bot/dev_db/nocodb:/usr/app/data"
-  #   networks:
-  #     - bot-net
- 
+    
 networks:
   bot-net:
     driver: bridge

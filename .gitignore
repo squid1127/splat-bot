@@ -162,4 +162,4 @@ cython_debug/
 #.idea/
 
 # Dev Database
-/dev_db/
+/db/
