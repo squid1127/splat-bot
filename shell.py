@@ -1,9 +1,9 @@
 import asyncio
 import discord
-import splatbot
+from discord.ext import commands
 
 class Shell:
-    def __init__(self, bot: splatbot.SplatBot, channel_id: int):
+    def __init__(self, bot: commands.Bot, channel_id: int):
         self.bot = bot
 
         self.channel_id = channel_id
@@ -17,7 +17,7 @@ class Shell:
             print("[Shell] Starting logging...")
             await asyncio.sleep(1)
             await self.log(
-                f"Bot has successfully started. **Database**: {'working' if self.bot.db.working else 'not working'} **Docker**: {'yes' if self.bot.docker else 'no'}",
+                f"Bot has successfully started.",
                 title="Bot Started",
                 msg_type="success",
                 cog="Shell",
