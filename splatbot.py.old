@@ -6,22 +6,11 @@ A general-purpose Discord bot build using discord.py, and MySQL.
 :copyright: (c) 2024-present squid1127, warriordragonid
 """
 
-# Packages & Imports
-# Discord Packages
-import discord
-from discord.ui import Select, View, Button
-from discord import app_commands
-from discord.ext import commands, tasks
-from typing import Optional, Literal  # For command params
-from datetime import timedelta, datetime  # For timeouts & timestamps
-from enum import Enum  # For enums (select menus)
 
-# Async Packages
-import asyncio
+import discord
+from discord.ext import commands, tasks
 import aiohttp
-import aiomysql
-import tabulate  # For tabular data
-import cryptography  # For database encryption
+import asyncio
 
 # For web frontend
 from fastapi import FastAPI
@@ -38,6 +27,7 @@ from fuzzywuzzy import fuzz
 import downreport
 
 import re
+
 
 # External cogs
 from database import Database

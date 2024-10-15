@@ -11,9 +11,7 @@ from enum import Enum  # For enums (select menus)
 # Async Packages
 import asyncio
 import aiohttp
-import aiomysql
-import tabulate  # For tabular data
-import cryptography  # For database encryption
+import asyncpg  # For PostgreSQL
 
 # For random status
 import random
@@ -33,7 +31,8 @@ from fuzzywuzzy import fuzz
 # Downtime warning
 import downreport
 
-import core
+# Core
+import core.squidcore as core
 
 #* Main Bot
 class SplatBot(core.Bot):
@@ -50,45 +49,12 @@ class SplatBot(core.Bot):
         super().__init__(token, self.name, shell_channel)
         
         self.add_db(postgres_connection, postgres_password)
-        asyncio.run(self.add_cogs())
+        asyncio.run(self    .add_cogs())
+        
+        self.set_status(random_status=core.RandomStatus.FUNNY_MESSAGES)
             
     async def add_cogs(self):
         """Add cogs to the bot"""
         # Add cogs
-        await self.add_cog(SplatDB(self, self.db))
-
-    def run(self):
-        """Start splat bot"""
-        super().run()
+        pass
     
-    
-class SplatDB(commands.Cog):
-    def __init__(
-        self,
-        bot: core.Bot,
-        db: core.DatabaseCore,
-    ):
-        self.bot = bot
-        self.db = db
-        
-        self.bot.shell.add_command(command="db", cog="SplatDB", description="Perform database operations")
-
-        
-    # On ready message
-    @commands.Cog.listener()
-    async def on_ready(self):
-        print("[SplatDB] Waiting for database connection")
-        
-        while not self.db.working:
-            await asyncio.sleep(1)
-            
-        print("[SplatDB] Ready")
-        
-    async def cog_status(self) -> str:
-        """Check the status of the cog"""
-        if not self.db.working:
-            return "Database not connected"
-        return "Ready"
-    
-    async def shell_callback()
-        
