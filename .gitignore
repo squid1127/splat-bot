@@ -163,3 +163,4 @@ cython_debug/
 
 # Dev Database
 /db/
+/dev_db/
