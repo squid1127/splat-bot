@@ -161,6 +161,13 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
-# Dev Database
-/db/
-/dev_db/
+# Cached files
+store/
+communal/
+
+# Database files
+db/
+msar/
+
+# Compose file for now
+compose.yml
