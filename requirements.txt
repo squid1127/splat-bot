@@ -1,0 +1,9 @@
+discord.py
+python-dotenv
+aiohttp
+asyncpg
+cryptography
+PyYAML
+fuzzywuzzy
+python-Levenshtein
+
