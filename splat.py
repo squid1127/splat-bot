@@ -15,8 +15,12 @@ from enum import Enum  # For enums (select menus)
 class Splat(core.Bot):
     def __init__(self, token: str, shell: int):
         super().__init__(token=token, shell_channel=shell, name="splat")
+        
+        print("[Splat] Loading cogs...")
         asyncio.run(self.add_cogs())
-
+        print("[Splat] Cogs loaded")
+        
+        
     def run(self):
         """Starts the bot"""
         if not self.has_db:
@@ -70,7 +74,7 @@ class DynamicWordFilter(commands.Cog):
         self.bot = bot
 
         self.schema = "splat"
-        self.table = "wordfilter"
+        self.table_words = "wordfilter"
         self.table_lists = "wordfilter_lists"
         self.format = f"""
         CREATE SCHEMA IF NOT EXISTS {self.schema};
@@ -96,6 +100,7 @@ class DynamicWordFilter(commands.Cog):
 
     @commands.Cog.listener()
     async def on_ready(self):
+        print("[DynamicWordFilter] Loading...")
         while not self.bot.db.working:
             await asyncio.sleep(1)
         print("[DynamicWordFilter] Ready")
