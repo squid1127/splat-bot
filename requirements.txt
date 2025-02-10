@@ -8,3 +8,4 @@ fuzzywuzzy
 python-Levenshtein
 watchdog
 timedelta
+python-dotenv
