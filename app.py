@@ -4,7 +4,8 @@ import splat #Splat Bot!!
 from dotenv import load_dotenv
 import os
 
-
+import logging
+logger = logging.getLogger("app")
 
 # Environment variables 
 load_dotenv()
@@ -30,5 +31,5 @@ if postgres_pool is None:
 splat = splat.Splat(token=token, shell=shell)
 splat.add_db(postgres_connection=postgres_connection, postgres_password=postgres_password, postgres_pool=postgres_pool)
 
-print("[Runner] Starting Splat bot")
+logger.info("Starting bot...")
 splat.run()
