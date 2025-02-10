@@ -509,7 +509,7 @@ class WordFilterCog(commands.Cog):
 
             embed = discord.Embed(
                 title="Word Filter Triggered",
-                description=f"I've detected banned words or phrases in your message. {'You have been muted for ' + str(timeout.total_seconds() // 60) +  ' minutes.' if success else 'You are unable to be muted at this time.'}",
+                description=f"I've detected banned words or phrases in your message. {'You have been muted for ' + str(timeout.total_seconds() // 60) +  ' minutes.' if success else 'You are unable to be muted at this time. Please refrain from using these words in the future.'}",
                 color=discord.Color.red(),
             )
             embed.add_field(
