@@ -77,7 +77,7 @@ class WordFilterCore:
     def __init__(self, scan_options: dict = {}):
         self.scan_options = scan_options
         self.lists = []
-        
+
         self.process_count = 0
 
     def add_list(
@@ -94,20 +94,20 @@ class WordFilterCore:
             triggers.extend(list_result)
         self.process_count += 1
         return triggers
-    
+
     def generate_tree(self) -> str:
         """Create a tree representation of the word filter"""
         if len(self.lists) == 0:
             return "[ No Lists ]"
-        
+
         tree = ""
         for list in self.lists:
             tree += f"*{list.name}:*\n"
-            
+
             if len(list.words) == 0:
                 tree += " [ No Entries ]\n\n"
                 continue
-            
+
             for word in list.words:
                 tree += f"- {word.word}\n"
                 for whitelist in word.whitelisted_words:
@@ -227,7 +227,7 @@ class WordFilterWord:
         # By default, use containing method
         if scan_options == {} or scan_options is None or scan_options == "":
             scan_options = {"type": "contains"}
-        
+
         new_word = WordFilterWord(word, self.list, scan_options)
         self.whitelisted_words.append(new_word)
         return new_word
@@ -267,6 +267,7 @@ class WordFilterCog(commands.Cog):
         self.table_words = "wordfilter"
         self.table_lists = "wordfilter_lists"
         self.table_whitelist = "wordfilter_whitelist"
+        self.table_ignore_list = "wordfilter_ignore_list"
         self.format = f"""
         CREATE SCHEMA IF NOT EXISTS {self.schema};
 
@@ -290,6 +291,12 @@ class WordFilterCog(commands.Cog):
             word_id INTEGER NOT NULL REFERENCES {self.schema}.{self.table_words}(id) ON DELETE CASCADE,
             scan_options JSONB
         );
+        
+        CREATE TABLE IF NOT EXISTS {self.schema}.{self.table_ignore_list} (
+            id BIGINT PRIMARY KEY,
+            type TEXT NOT NULL CHECK (type IN ('user', 'channel', 'guild')),
+            description TEXT
+        );
         """
 
         # Commands
@@ -303,6 +310,11 @@ class WordFilterCog(commands.Cog):
             cog="WordFilterCog",
             description="Manage the dynamic word filter (alias)",
         )
+
+        # Ignore system
+        self.ignored_users = []
+        self.ignored_channels = []
+        self.ignored_guids = []
 
     @commands.Cog.listener()
     async def on_ready(self):
@@ -322,17 +334,22 @@ class WordFilterCog(commands.Cog):
         self.table_lists_object = self.schema_object.get_table(self.table_lists)
         self.table_words_object = self.schema_object.get_table(self.table_words)
         self.table_whitelist_object = self.schema_object.get_table(self.table_whitelist)
+        self.table_ignore_list_object = self.schema_object.get_table(
+            self.table_ignore_list
+        )
 
         # Load the lists
         lists = await self.table_lists_object.fetch()
         words = await self.table_words_object.fetch()
         whitelisted_words = await self.table_whitelist_object.fetch()
+        ignore_list = await self.table_ignore_list_object.fetch()
 
         # Drop the existing lists
         self.core.lists = []
 
         # Process the lists
         await self.process_lists(lists, words, whitelisted_words)
+        await self.process_ignore_list(ignore_list)
 
         # Debug
         logger.info("Loaded lists")
@@ -411,6 +428,19 @@ class WordFilterCog(commands.Cog):
             word: WordFilterWord = word_objects[whitelist_word["word_id"]]
             word.add_whitelisted_word(whitelist_word["word"], options)
 
+    async def process_ignore_list(self, ignore_list: list[dict]):
+        self.ignored_channels = []
+        self.ignored_users = []
+        self.ignored_guids = []
+
+        for item in ignore_list:
+            if item["type"] == "user":
+                self.ignored_users.append(item["id"])
+            elif item["type"] == "channel":
+                self.ignored_channels.append(item["id"])
+            elif item["type"] == "guid":
+                self.ignored_guids.append(item["id"])
+
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
         if message.author.bot:
@@ -450,7 +480,19 @@ class WordFilterCog(commands.Cog):
             )
             await interaction.message.edit(embed=embed, view=None)
 
+    async def check_if_ignored(self, message: discord.Message):
+        if message.author.id in self.ignored_users:
+            return True
+        if message.channel.id in self.ignored_channels:
+            return True
+        if message.guild.id in self.ignored_guids:
+            return True
+        return False
+
     async def handle_message(self, message: discord.Message):
+        if await self.check_if_ignored(message):
+            return
+
         result = self.core.evaluate(message.content.lower())
         if result:
             logger.info(f"Detected trigger in message from {message.author}: {result}")
@@ -508,15 +550,13 @@ class WordFilterCog(commands.Cog):
                     f"### Lists:\n{lists}", title="Word Filter", msg_type="info"
                 )
                 return
-            
+
             # Generate a tree representation of the word filter
             if command.query == "tree":
                 tree = self.core.generate_tree()
-                await command.log(
-                    tree, title="Word Filter: Tree", msg_type="info"
-                )
+                await command.log(tree, title="Word Filter: Tree", msg_type="info")
                 return
-            
+
             # Default to help / tree
             fields = [
                 {
@@ -525,22 +565,158 @@ class WordFilterCog(commands.Cog):
 - `lists` - List the word filter lists
 - `tree` - Generate a tree representation of the word filter
 - `reload` - Reload the word filter
-                    """
+                    """,
                 },
-                {
-                    "name": "Tree",
-                    "value": self.core.generate_tree()
-                }
+                {"name": "Tree", "value": self.core.generate_tree()},
             ]
-            
+
             # Status: If working there should be at least one list with at least one word. Process count must be >0
             working = False
             if isinstance(self.core.lists, list) and len(self.core.lists) > 0:
-                if isinstance(self.core.lists[0].words, list) and len(self.core.lists[0].words) > 0:
+                if (
+                    isinstance(self.core.lists[0].words, list)
+                    and len(self.core.lists[0].words) > 0
+                ):
                     if self.core.process_count > 0:
                         working = True
 
             await command.log(
-                "Word filter has passed status checks" if working else "Word filter has **failed** status checks", title="Word Filter", msg_type="info", fields=fields
+                (
+                    "Word filter has passed status checks"
+                    if working
+                    else "Word filter has **failed** status checks"
+                ),
+                title="Word Filter",
+                msg_type="info",
+                fields=fields,
             )
             return
+
+    # Commands
+    # Management
+    @app_commands.command(
+        name="wordfilter-ignore",
+        description="Ignore a user, channel, or guild from the word filter",
+    )
+    @app_commands.describe(
+        member="Ignore a specific member",
+        channel="Ignore messages from this channel",
+        guild="Ignore messages from this guild",
+        ignore="Set to True to ignore, False to unignore",
+    )
+    async def ignore(
+        self,
+        interaction: discord.Interaction,
+        member: discord.Member = None,
+        channel: bool = False,
+        guild: bool = False,
+        ignore: bool = True,
+    ):
+        await interaction.response.defer()
+        if member:
+            # Check permissions
+            if not interaction.user.guild_permissions.mute_members:
+                await interaction.response.send_message(
+                    "You do not have permission to mute users.", ephemeral=True
+                )
+                return
+
+            # Check if the user is already ignored
+            if member.id in self.ignored_users:
+                if ignore:
+                    await interaction.followup.send(
+                        f"{member.mention} is already ignored",
+                    )
+                else:
+                    self.ignored_users.remove(member.id)
+                    await self.table_ignore_list_object.delete(
+                        {"id": member.id, "type": "user"}
+                    )
+                    await interaction.followup.send(
+                        f"Unignored {member.mention}",
+                    )
+            else:
+                if not ignore:
+                    await interaction.followup.send(
+                        f"{member.mention} is not ignored",
+                    )
+                else:
+                    self.ignored_users.append(member.id)
+                    await self.table_ignore_list_object.insert(
+                        {"id": member.id, "type": "user"}
+                    )
+                    await interaction.followup.send(
+                        f"Ignored {member.mention}",
+                    )
+
+        if channel:
+            # Check permissions
+            if not interaction.user.guild_permissions.manage_channels:
+                await interaction.response.send_message(
+                    "You do not have permission to manage channels.", ephemeral=True
+                )
+                return
+
+            # Check if the channel is already ignored
+            if interaction.channel.id in self.ignored_channels:
+                if ignore:
+                    await interaction.followup.send(
+                        f"{interaction.channel.mention} is already ignored",
+                    )
+                else:
+                    self.ignored_channels.remove(interaction.channel.id)
+                    await self.table_ignore_list_object.delete(
+                        {"id": interaction.channel.id, "type": "channel"}
+                    )
+                    await interaction.followup.send(
+                        f"Unignored {interaction.channel.mention}",
+                    )
+            else:
+                if not ignore:
+                    await interaction.followup.send(
+                        f"{interaction.channel.mention} is not ignored",
+                    )
+                else:
+                    self.ignored_channels.append(interaction.channel.id)
+                    await self.table_ignore_list_object.insert(
+                        {"id": interaction.channel.id, "type": "channel"}
+                    )
+                    await interaction.followup.send(
+                        f"Ignored {interaction.channel.mention}",
+                    )
+
+        if guild:
+            # Check permissions
+            if not interaction.user.guild_permissions.manage_guild:
+                await interaction.response.send_message(
+                    "You do not have permission to manage the guild.", ephemeral=True
+                )
+                return
+
+            # Check if the guild is already ignored
+            if interaction.guild.id in self.ignored_guids:
+                if ignore:
+                    await interaction.followup.send(
+                        f"{interaction.guild.name} is already ignored",
+                    )
+                else:
+                    self.ignored_guids.remove(interaction.guild.id)
+                    await self.table_ignore_list_object.delete(
+                        {"id": interaction.guild.id, "type": "guild"}
+                    )
+                    await interaction.followup.send(
+                        f"Unignored {interaction.guild.name}",
+                    )
+            else:
+                if not ignore:
+                    await interaction.followup.send(
+                        f"{interaction.guild.name} is not ignored",
+                    )
+                else:
+                    self.ignored_guids.append(interaction.guild.id)
+                    await self.table_ignore_list_object.insert(
+                        {"id": interaction.guild.id, "type": "guild"}
+                    )
+                    await interaction.followup.send(
+                        f"Ignored {interaction.guild.name}",
+                    )
