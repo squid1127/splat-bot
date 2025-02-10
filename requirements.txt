@@ -6,4 +6,5 @@ cryptography
 PyYAML
 fuzzywuzzy
 python-Levenshtein
+watchdog
 
