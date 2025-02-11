@@ -40,22 +40,28 @@ def process_query(query: str, filter: str, options: dict = {}) -> "WordFilterRes
 
     if len(query) < options.get("min_length", 0):
         return WordFilterResult(query, False, 0)
+    
+    logger.debug(f"Processing query: {query} with filter: {filter} | Options: {options}")
 
     if options["type"] == "fuzzy":
-        # Get the fuzzy method
-        if type(options["fuzzy_method"]) == str:
-            fuzzy_methods = FUZZY_METHODS
-            if "fuzzy_method" in options:
-                options["fuzzy_method"] = fuzzy_methods.get(
-                    options["fuzzy_method"], fuzz.ratio
-                )
-            else:
-                logger.warning("Fuzzy method not specified, defaulting to fuzz.ratio")
-                options["fuzzy_method"] = fuzz.ratio
+        # # Get the fuzzy method
+        # if type(options["fuzzy_method"]) == str:
+        #     fuzzy_methods = FUZZY_METHODS
+        #     if "fuzzy_method" in options:
+        #         options["fuzzy_method"] = fuzzy_methods.get(
+        #             options["fuzzy_method"], fuzz.ratio
+        #         )
+        #     else:
+        #         logger.warning("Fuzzy method not specified, defaulting to fuzz.ratio")
+        #         options["fuzzy_method"] = fuzz.ratio
 
-        logger.debug("Fuzzy method: " + options["fuzzy_method"].__name__)
+        # logger.debug("Fuzzy method: " + options["fuzzy_method"].__name__)
+        
+        fuzzy_method = FUZZY_METHODS.get(options.get("fuzzy_method"), fuzz.ratio)
 
-        score = options["fuzzy_method"](query, filter)
+        logger.debug("Fuzzy method: " + fuzzy_method.__name__)
+        
+        score = fuzzy_method(query, filter)
         if score >= options["threshold"]:
             return WordFilterResult(query, True, score)
 
@@ -66,7 +72,6 @@ def process_query(query: str, filter: str, options: dict = {}) -> "WordFilterRes
     elif options["type"] == "contains":
         if filter in query:
             return WordFilterResult(query, True, 100)
-    elif options["type"] == "regex":
         if re.search(filter, query):
             return WordFilterResult(query, True, 100)
 
@@ -95,21 +100,31 @@ class WordFilterCore:
         self.process_count += 1
         return triggers
 
-    def generate_tree(self) -> str:
+    def generate_tree(self, list: str = None, debug: bool = False) -> str:
         """Create a tree representation of the word filter"""
         if len(self.lists) == 0:
             return "[ No Lists ]"
 
         tree = ""
-        for list in self.lists:
-            tree += f"*{list.name}:*\n"
+        for current_list in self.lists:
+            if list and current_list.name != list:
+                continue
 
-            if len(list.words) == 0:
+            if not list:
+                tree += f"*{current_list.name}:*\n"
+                if debug:
+                    tree += f"{current_list.description}\n"
+                    scan_options = current_list.scan_options
+                    logger.debug(f"Scan Options: {scan_options}")
+                    logger.debug(f"Current list is of type {type(current_list)} Scan options is of type {type(scan_options)}")
+                    tree += f"Scan Options:\n```json\n{json.dumps(scan_options, indent=2)}\n```\n"
+                    
+            if len(current_list.words) == 0:
                 tree += " [ No Entries ]\n\n"
                 continue
 
-            for word in list.words:
-                tree += f"- {word.word}\n"
+            for word in current_list.words:
+                tree += f"1. {word.word}\n"
                 for whitelist in word.whitelisted_words:
                     tree += f"  - {whitelist.word}\n"
             tree += "\n"
@@ -326,35 +341,41 @@ class WordFilterCog(commands.Cog):
         await self.init()
 
     async def init(self):
-        # Create the database schema
-        await self.bot.db.execute(self.format)
+        try:
+            # Create the database schema
+            await self.bot.db.execute(self.format)
 
-        # Fetch data from the database
-        self.schema_object = self.bot.db.data.get_schema(self.schema)
-        self.table_lists_object = self.schema_object.get_table(self.table_lists)
-        self.table_words_object = self.schema_object.get_table(self.table_words)
-        self.table_whitelist_object = self.schema_object.get_table(self.table_whitelist)
-        self.table_ignore_list_object = self.schema_object.get_table(
-            self.table_ignore_list
-        )
+            # Fetch data from the database
+            self.schema_object = self.bot.db.data.get_schema(self.schema)
+            self.table_lists_object = self.schema_object.get_table(self.table_lists)
+            self.table_words_object = self.schema_object.get_table(self.table_words)
+            self.table_whitelist_object = self.schema_object.get_table(self.table_whitelist)
+            self.table_ignore_list_object = self.schema_object.get_table(
+                self.table_ignore_list
+            )
 
-        # Load the lists
-        lists = await self.table_lists_object.fetch()
-        words = await self.table_words_object.fetch()
-        whitelisted_words = await self.table_whitelist_object.fetch()
-        ignore_list = await self.table_ignore_list_object.fetch()
+            # Load the lists
+            lists = await self.table_lists_object.fetch()
+            words = await self.table_words_object.fetch()
+            whitelisted_words = await self.table_whitelist_object.fetch()
+            ignore_list = await self.table_ignore_list_object.fetch()
 
-        # Drop the existing lists
-        self.core.lists = []
+            # Drop the existing lists
+            self.core.lists = []
 
-        # Process the lists
-        await self.process_lists(lists, words, whitelisted_words)
-        await self.process_ignore_list(ignore_list)
+            # Process the lists
+            await self.process_lists(lists, words, whitelisted_words)
+            await self.process_ignore_list(ignore_list)
 
-        # Debug
-        logger.info("Loaded lists")
+            # Debug
+            logger.info("Loaded lists")
 
-        logger.info(f"Tree:\n{self.core.generate_tree()}")
+            logger.info(f"Tree:\n{self.core.generate_tree()}")
+        except Exception as e:
+            logger.error(f"Failed to load word filter: {e}")
+            await self.bot.shell.log(
+                f"Failed to load word filter: {e}", title="Word Filter Init", msg_type="error", cog="WordFilterCog"
+            )
 
     async def process_lists(
         self, lists: list[dict], words: list[dict], whitelisted_words: list[dict]
@@ -392,6 +413,7 @@ class WordFilterCog(commands.Cog):
         # Create the words
         word_objects = {}
         for word in words:
+            logger.info(f"Processing word: {word} with list id {word['list_id']} and scan options {word['scan_options']}")
             try:
                 options = json.loads(word["scan_options"])
                 if isinstance(options, str):
@@ -530,6 +552,160 @@ class WordFilterCog(commands.Cog):
             else:
                 await message.reply(embed=embed)
 
+    class WordFilterHomeView(View):
+        def __init__(self, core: WordFilterCore, cog: "WordFilterCog"):
+            super().__init__()
+            self.core = core
+            self.cog = cog
+            self.lists = self.core.lists
+
+            options = [
+                discord.SelectOption(label=list.name, value=list.name)
+                for list in self.lists
+            ]
+
+            self.select = discord.ui.Select(
+                placeholder="Choose a list...", options=options
+            )
+            self.select.callback = self.select_list
+            self.add_item(self.select)
+
+        async def select_list(self, interaction: discord.Interaction):
+
+            selected_list = self.select.values[0]
+
+            list_text = self.core.generate_tree(list=selected_list)
+
+            embed = discord.Embed(
+                title=f"Word Filter List: {selected_list}",
+                description=list_text,
+                color=discord.Color.blue(),
+            )
+            # Get the list
+            selected_list_obj = None
+            for list in self.lists:
+                if list.name == selected_list:
+                    selected_list_obj = list
+                    break
+                
+            
+            if selected_list_obj is None:
+                await interaction.response.send_message("Selected list not found.", ephemeral=True)
+                return
+
+            view = self.WordFilterListView(selected_list_obj, self.core, self.cog)
+            await interaction.response.send_message(embed=embed, view=view)
+
+        @discord.ui.button(label="Tree", style=discord.ButtonStyle.secondary)
+        async def tree(self, interaction: discord.Interaction, button: discord.Button):
+            tree = self.core.generate_tree()
+            embed = discord.Embed(
+                title="Word Filter Tree",
+                description=tree,
+                color=discord.Color.blue(),
+            )
+            await interaction.response.send_message(embed=embed)
+
+        @discord.ui.button(label="Reload", style=discord.ButtonStyle.secondary)
+        async def reload(
+            self, interaction: discord.Interaction, button: discord.Button
+        ):
+            await self.cog.init()
+            await interaction.response.send_message(
+                "Word filter reloaded successfully."
+            )
+
+        class WordFilterListView(View):
+            def __init__(
+                self, list: WordFilterList, core: WordFilterCore, cog: "WordFilterCog"
+            ):
+                super().__init__()
+                self.list = list
+                self.core = core
+                self.cog = cog
+                self.interaction = None
+
+            @discord.ui.button(label="Add Word", style=discord.ButtonStyle.primary)
+            async def add_word(
+                self, interaction: discord.Interaction, button: discord.Button
+            ):
+                modal = self.WordFilterAddWordModal(self.list, self.core, self.cog, self)
+                await interaction.response.send_modal(modal)
+                self.interaction = interaction
+                
+            async def recreate_view(self):
+                content = self.core.generate_tree(list=self.list.name)
+                embed = discord.Embed(
+                    title=f"Word Filter List: {self.list.name}",
+                    
+                    description=content,
+                    color=discord.Color.blue(),
+                )
+                if self.interaction:
+                    await self.interaction.edit_original_response(embed=embed, view=self)
+
+            class WordFilterAddWordModal(discord.ui.Modal, title="Add a Word"):
+                word_content = discord.ui.TextInput(
+                    label="Word",
+                    placeholder="Enter a word or phrase",
+                    required=True,
+                    style=discord.TextStyle.short,
+                )
+                scan_options = discord.ui.TextInput(
+                    label="Scan Options",
+                    placeholder="Enter scan options as a JSON object",
+                    required=False,
+                    style=discord.TextStyle.long,
+                )
+                
+                def __init__(self, list: WordFilterList, core: WordFilterCore, cog: "WordFilterCog", superview):
+                    self.list = list
+                    self.core = core
+                    self.cog = cog
+                    self.superview = superview
+                    super().__init__()
+
+                async def on_submit(self, interaction: discord.Interaction):
+                    word = self.word_content.value
+                    list_name = self.list.name
+                    
+                    # Get the list id
+                    matches = await self.cog.table_lists_object.fetch({"name": list_name})
+
+                    list_id = None
+                    if isinstance(matches, list) and len(matches) == 1:
+                        list_id = matches[0]["id"]
+                    else:
+                        await interaction.response.send_message("List not found within database.", ephemeral=True)
+                        return
+                    
+                    # Validate and format scan options
+                    scan_options_value = self.scan_options.value
+                    if scan_options_value and scan_options_value != "":
+                        try:
+                            scan_options_value = json.loads(scan_options_value)
+                        except json.JSONDecodeError:
+                            scan_options_value = {}
+                    else:
+                        scan_options_value = {}
+                    
+                    entry = {
+                        "word": word,
+                        "list_id": list_id,
+                        "scan_options": json.dumps(scan_options_value) if scan_options_value != {} else 'null'
+                    }
+                    logger.info(f"Adding word: {entry} to list {list_name}")
+                    # Add the word
+                    await self.cog.table_words_object.insert(entry)
+
+                    await interaction.response.send_message(embed=discord.Embed(title="Word Added", description=f"Word '{word}' has been added to list '{list_name}'. Reloading...", color=discord.Color.green()))
+                    
+                    await self.cog.init()
+                    
+                    await interaction.edit_original_response(embed=discord.Embed(title="Word Added", description=f"Word '{word}' has been added to list '{list_name}'.", color=discord.Color.green()))
+
+                    await self.superview.recreate_view()
+
     async def shell_callback(self, command: squidcore.ShellCommand):
         if command.name == "wordfilter" or command.name == "wf":
             if command.query.startswith("reload"):
@@ -556,6 +732,10 @@ class WordFilterCog(commands.Cog):
                 tree = self.core.generate_tree()
                 await command.log(tree, title="Word Filter: Tree", msg_type="info")
                 return
+            if command.query == "debug":
+                tree = self.core.generate_tree(debug=True)
+                await command.log(tree, title="Word Filter: Debug Tree", msg_type="info")
+                return
 
             # Default to help / tree
             fields = [
@@ -567,7 +747,11 @@ class WordFilterCog(commands.Cog):
 - `reload` - Reload the word filter
                     """,
                 },
-                {"name": "Tree", "value": self.core.generate_tree()},
+                # {"name": "Tree", "value": self.core.generate_tree()},
+                {
+                    "name": "Options",
+                    "value": "Select a list or choose an option below",
+                },
             ]
 
             # Status: If working there should be at least one list with at least one word. Process count must be >0
@@ -582,13 +766,15 @@ class WordFilterCog(commands.Cog):
 
             await command.log(
                 (
-                    "Word filter has passed status checks"
+                    "Word filter has passed status checks."
                     if working
-                    else "Word filter has **failed** status checks"
-                ),
+                    else "Word filter has **failed** status checks."
+                )
+                + " Choose an option below.",
                 title="Word Filter",
                 msg_type="info",
-                fields=fields,
+                # fields=fields,
+                view=self.WordFilterHomeView(self.core, self),
             )
             return
 
