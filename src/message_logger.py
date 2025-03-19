@@ -132,6 +132,9 @@ channels:
                 if monitor_id in monitor_ids:
                     return (False, "Monitor ID is already defined. (See default config)")
                 monitor_ids.append(monitor_id)
+                monitor_embed_title = monitor.get("embed_title", True)
+                if not isinstance(monitor_embed_title, bool):
+                    return (False, "Embed title is not a boolean. (See default config)") 
                 events = monitor.get("events")
                 if not isinstance(events, list):
                     return (False, "Events should be a list. (See default config)")
@@ -219,7 +222,7 @@ channels:
         # Pass the message to the handler
         await self.handle_message(after, "messageUpdate", beforemessage=before)
         
-    async def embed_message(self, message: discord.Message, event: str):
+    async def embed_message(self, message: discord.Message, event: str, embed_title: bool = True):
         """Creates an embed for a message event"""
         # Extract information
         title = self.EMBED_TITLES.get(event, "Message Event")
@@ -266,14 +269,15 @@ channels:
             # Monitor found
             monitors.append((channel_id, monitor))
             logger.info(f"Logging message event {event} in channel {channel_id}")
-            
-        # Create a message embed
-        embeds = await self.embed_message(message, event)
-        if beforemessage:
-            embeds += await self.embed_message(beforemessage, "_messageUpdateBefore")
+        
             
         # Send the embeds
         for channel_id, monitor in monitors:
+            # Create a message embed
+            embeds = await self.embed_message(message, event, embed_title=monitor.get("embed_title", True))
+            if beforemessage:
+                embeds += await self.embed_message(beforemessage, "_messageUpdateBefore")
+            
             channel = self.bot.get_channel(channel_id)
             if channel is None:
                 logger.warning(f"Channel {channel_id} not found.")
