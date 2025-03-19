@@ -1,4 +1,6 @@
-# Misc. Commands for splat
+
+async def cog_status(self):
+    return "Just doing stuff idk"# Misc. Commands for splat
 
 # Discord
 import asyncio
@@ -234,3 +236,6 @@ class SplatCommands(commands.Cog):
         )
         
         await interaction.response.send_message(embed=embed)
+
+    async def cog_status(self):
+        return "Just doing stuff idk"

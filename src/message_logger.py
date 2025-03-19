@@ -295,3 +295,10 @@ channels:
                 await channel.send(content=log_message, embeds=embeds)
             else:
                 await channel.send(embeds=embeds)
+                
+    async def cog_status(self):
+        """Return the status of the message logger cog."""
+        if not self.config_success:
+            return "Failed to load configuration"
+        
+        return "Ready"

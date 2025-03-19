@@ -906,3 +906,6 @@ class WordFilterCog(commands.Cog):
                     await interaction.followup.send(
                         f"Ignored {interaction.guild.name}",
                     )
+
+    async def cog_status(self):
+        return "Ready" if self.core.lists else "Error: No lists loaded"
