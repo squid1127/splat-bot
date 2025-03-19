@@ -17,6 +17,8 @@ logger = logging.getLogger("splat")
 # Submodules
 from wordfilter import WordFilterCore, WordFilterCog
 from commands import SplatCommands
+from message_logger import MessageLogger
+
 class Splat(core.Bot):
     def __init__(self, token: str, shell: int):
         super().__init__(token=token, shell_channel=shell, name="splat")
@@ -39,3 +41,4 @@ class Splat(core.Bot):
         """Adds cogs to the bot"""
         await self.add_cog(WordFilterCog(self))
         await self.add_cog(SplatCommands(self))
+        await self.add_cog(MessageLogger(self))
