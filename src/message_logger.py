@@ -261,6 +261,8 @@ channels:
                 pass
             else:
                 continue
+            if event not in monitor.get("events"):
+                continue
             # Monitor found
             monitors.append((channel_id, monitor))
             logger.info(f"Logging message event {event} in channel {channel_id}")
