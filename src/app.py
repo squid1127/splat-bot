@@ -1,4 +1,4 @@
-import splat #Splat Bot!!   
+import splat as splat #Splat Bot!!   
 
 # Environment variable handling
 from dotenv import load_dotenv
