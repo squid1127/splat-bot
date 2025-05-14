@@ -1,6 +1,4 @@
-
-async def cog_status(self):
-    return "Just doing stuff idk"# Misc. Commands for splat
+# Misc. Commands for splat
 
 # Discord
 import asyncio

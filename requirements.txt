@@ -9,3 +9,5 @@ python-Levenshtein
 watchdog
 timedelta
 python-dotenv
+requests
+beautifulsoup4

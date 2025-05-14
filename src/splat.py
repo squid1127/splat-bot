@@ -15,9 +15,7 @@ import logging
 logger = logging.getLogger("splat")
 
 # Submodules
-from wordfilter import WordFilterCore, WordFilterCog
-from commands import SplatCommands
-from message_logger import MessageLogger
+from cogs import *
 
 class Splat(core.Bot):
     def __init__(self, token: str, shell: int):
@@ -42,3 +40,4 @@ class Splat(core.Bot):
         await self.add_cog(WordFilterCog(self))
         await self.add_cog(SplatCommands(self))
         await self.add_cog(MessageLogger(self))
+        await self.add_cog(PriceTracker(self))
