@@ -1,5 +1,9 @@
 # Use the official Python image from the Docker Hub
-FROM python:3.12.1-slim
+FROM python:alpine3.20
+
+# Install Alpine dependencies
+RUN apk add --no-cache \
+    gcc musl-dev libffi-dev openssl-dev cargo make g++
 
 # Set the working directory in the container
 WORKDIR /app
