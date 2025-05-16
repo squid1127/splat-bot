@@ -708,6 +708,8 @@ class WordFilterCog(commands.Cog):
 
     async def shell_callback(self, command: squidcore.ShellCommand):
         if command.name == "wordfilter" or command.name == "wf":
+            
+            # Reload the word filter
             if command.query.startswith("reload"):
                 await self.init()
                 await command.log(
@@ -716,6 +718,15 @@ class WordFilterCog(commands.Cog):
                     msg_type="success",
                 )
                 return
+            
+            # Other actions require lists
+            if len(self.core.lists) == 0:
+                await command.log(
+                    "No lists found. Please configure lists using a database client. Use `splat wordfilter reload` to reload lists.",
+                    title="Word Filter",
+                    msg_type="error",
+                )
+                return  
 
             # List the lists
             if command.query == "lists":
