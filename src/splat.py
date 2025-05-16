@@ -1,5 +1,4 @@
-# Core
-import core
+"""Core bot class for Splat (based off of squid1127/squidcore)"""
 
 # Discord
 import asyncio
@@ -15,6 +14,7 @@ import logging
 logger = logging.getLogger("splat")
 
 # Submodules
+import core
 from cogs import *
 
 class Splat(core.Bot):
