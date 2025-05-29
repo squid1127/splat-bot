@@ -247,8 +247,11 @@ class PriceTracker(commands.Cog):
     SCHEMA = "splat"
     TABLE = "price_tracker"
     TABLE_PRICE_HISTORY = "price_history"
+    ADVISORY_LOCK = "49378"  # Arbitrary number for advisory lock
 
     INIT_SQL = f"""
+    SELECT pg_advisory_lock({ADVISORY_LOCK});  -- Arbitrary number, must match across all clients
+
     CREATE SCHEMA IF NOT EXISTS {SCHEMA};
     
     CREATE TABLE IF NOT EXISTS {SCHEMA}.{TABLE} ( /* Product info */
@@ -271,6 +274,8 @@ class PriceTracker(commands.Cog):
         timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP, /* Timestamp of when the price was recorded */
         FOREIGN KEY (product_id) REFERENCES {SCHEMA}.{TABLE}(id) ON DELETE CASCADE
     );
+    
+    SELECT pg_advisory_unlock({ADVISORY_LOCK});  -- Release the advisory lock
     """
 
     async def init(self):

@@ -283,7 +283,10 @@ class WordFilterCog(commands.Cog):
         self.table_lists = "wordfilter_lists"
         self.table_whitelist = "wordfilter_whitelist"
         self.table_ignore_list = "wordfilter_ignore_list"
+        self.advisory_lock = "95347"
         self.format = f"""
+        SELECT pg_advisory_lock({self.advisory_lock});        
+        
         CREATE SCHEMA IF NOT EXISTS {self.schema};
 
         CREATE TABLE IF NOT EXISTS {self.schema}.{self.table_lists} (
@@ -312,6 +315,8 @@ class WordFilterCog(commands.Cog):
             type TEXT NOT NULL CHECK (type IN ('user', 'channel', 'guild')),
             description TEXT
         );
+        
+        SELECT pg_advisory_unlock({self.advisory_lock});
         """
 
         # Commands
