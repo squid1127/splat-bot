@@ -14,7 +14,6 @@ load_dotenv()
 token = os.getenv("SPLAT_TOKEN")
 shell = int(os.getenv("SPLAT_SHELL"))
 
-
 splat = splat.Splat(token=token, shell=shell)
 splat.add_db(from_env=True)  # Add database from environment variables
 
