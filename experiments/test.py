@@ -60,6 +60,9 @@ for url in urls:
     except AttributeError:
         image = None
         image_url = None
+        
+    # Store name
+    store_name = soup.find("span", class_="storeName").text.strip()
 
     print(f"Item name: {item_name}")
     print(f"Item ID: {item_id}")
@@ -67,5 +70,6 @@ for url in urls:
     print(f"Item Brand: {item_brand}")
     print(f"Item Category: {item_category}")
     print(f"Image URL: {image_url}")
+    print(f"Store Name: {store_name}")
 
     print("-----------------------------------")
