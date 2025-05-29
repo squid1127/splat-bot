@@ -286,6 +286,7 @@ class PriceTracker(commands.Cog):
         logger.info("Initializing...")
         try:
             # Create the database schema
+            await asyncio.sleep(1)
             await self.bot.db.execute(self.INIT_SQL)
 
             # Fetch data from the database
@@ -295,9 +296,11 @@ class PriceTracker(commands.Cog):
                 self.TABLE_PRICE_HISTORY
             )
 
-            asyncio.sleep(5)
+            await asyncio.sleep(5)
             # Start the refresh task
             self.refresh_all_products_task.start()
+            
+            logger.info("Price Tracker initialized successfully")
 
         except Exception as e:
             logger.error(f"Error initializing Price Tracker: {e}")
