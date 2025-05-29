@@ -250,7 +250,7 @@ class PriceTracker(commands.Cog):
     ADVISORY_LOCK = "49378"  # Arbitrary number for advisory lock
 
     INIT_SQL = f"""
-    SELECT pg_advisory_lock({ADVISORY_LOCK});  -- Arbitrary number, must match across all clients
+    SELECT pg_try_advisory_lock({ADVISORY_LOCK});  -- Arbitrary number, must match across all clients
 
     CREATE SCHEMA IF NOT EXISTS {SCHEMA};
     
