@@ -285,7 +285,7 @@ class WordFilterCog(commands.Cog):
         self.table_ignore_list = "wordfilter_ignore_list"
         self.advisory_lock = "95347"
         self.format = f"""
-        SELECT pg_advisory_lock({self.advisory_lock});        
+        SELECT pg_try_advisory_lock({self.advisory_lock});        
         
         CREATE SCHEMA IF NOT EXISTS {self.schema};
 
