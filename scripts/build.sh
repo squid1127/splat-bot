@@ -8,7 +8,7 @@ cd "${REPO_ROOT}"
 
 echo "Building bot Docker image..."
 DOCKERFILE="dockerfile"
-IMAGE_NAME="ghcr.io/squid1127/jerry-bot:main"
+IMAGE_NAME="ghcr.io/squid1127/splat-bot:main"
 COMPOSE_FILE="docker-compose.yml"
 
 trap 'echo "[build] Error on line ${LINENO}. Aborting." >&2' ERR
